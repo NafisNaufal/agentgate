@@ -1,0 +1,40 @@
+{
+  "name": "code_data_protection_policy",
+  "description": "Source-code exposure, API keys, private keys, credentials, env files, repo secrets.",
+  "rules": [
+    {
+      "id": "code.secret_egress",
+      "description": "Secret/credential material leaving via an outbound action.",
+      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT"],
+      "action_types": ["API_CALL", "BROWSER_SUBMIT", "BROWSER_TYPE"],
+      "decision": "BLOCK",
+      "risk_floor": "CRITICAL",
+      "reason": "Secret/credential egress to an external system is blocked"
+    },
+    {
+      "id": "code.secret_present",
+      "description": "Secret material present in the payload at all.",
+      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT"],
+      "decision": "SANITIZE",
+      "risk_floor": "HIGH",
+      "reason": "Detected secret material should be redacted before the action continues"
+    },
+    {
+      "id": "code.env_file_access",
+      "description": "Reading an environment / credentials file.",
+      "entity_kinds_any": ["ENV_FILE"],
+      "decision": "NEED_APPROVAL",
+      "risk_floor": "HIGH",
+      "reason": "Accessing an environment/credentials file requires approval"
+    },
+    {
+      "id": "code.source_code_egress",
+      "description": "Source code about to leave the boundary.",
+      "tags_any": ["source_code"],
+      "risk_hints_any": ["external_send"],
+      "decision": "NEED_APPROVAL",
+      "risk_floor": "HIGH",
+      "reason": "Source code paired with an external send requires approval"
+    }
+  ]
+}

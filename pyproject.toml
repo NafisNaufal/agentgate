@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentgate"
+version = "0.1.0"
+description = "Framework-agnostic pre-action guardrail engine for AI agent tool actions (DS core)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []   # core engine is pure stdlib; runs with no third-party packages
+
+[project.optional-dependencies]
+# Real connectors / browser automation live in the DE track and are optional here.
+dev = ["pytest>=7"]
+
+[project.scripts]
+agentgate = "agentgate.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agentgate*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
