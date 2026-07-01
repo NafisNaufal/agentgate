@@ -12,3 +12,8 @@ audit_*.jsonl
 
 # Confidential company documents — kept local, never pushed
 docs/*.pdf
+
+# Editor / tooling config (not part of the project)
+.serena/
+.vscode/
+.idea/
