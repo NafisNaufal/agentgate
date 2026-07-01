@@ -8,6 +8,7 @@ Executor interface that the Data Engineer track fills with real connectors.
 
 from .schemas import ActionRequest, DecisionResponse, Decision, RiskLevel
 from .engine import AgentGate
+from .tools import ToolRegistry, ToolSpec, DEFAULT_TOOL_REGISTRY
 
 __all__ = [
     "ActionRequest",
@@ -15,6 +16,9 @@ __all__ = [
     "Decision",
     "RiskLevel",
     "AgentGate",
+    "ToolRegistry",
+    "ToolSpec",
+    "DEFAULT_TOOL_REGISTRY",
 ]
 
 __version__ = "0.1.0"

@@ -11,6 +11,7 @@ from typing import Any
 
 from ..action_space import validate_proposal
 from ..schemas import ActionRequest
+from ..tools import DEFAULT_TOOL_REGISTRY
 
 
 @dataclass
@@ -44,7 +45,7 @@ class Proposal:
             if args.get(key):
                 payload = str(args[key])
                 break
-        return ActionRequest(
+        req = ActionRequest(
             action_type=self.action_type,
             domain=self.domain,
             target_system=self.target_system,
@@ -57,6 +58,10 @@ class Proposal:
             rollback_available=self.rollback_available,
             confidence=self.confidence,
         )
+        # Tool Registry enrichment: complete the contract and apply the tool's inherent
+        # safety defaults so the guardrail does not depend on the planner to volunteer
+        # that, e.g., a Stripe charge is payment-related or a Telegram send is external.
+        return DEFAULT_TOOL_REGISTRY.enrich(req)
 
 
 def _summarize(text: str, n: int = 120) -> str:

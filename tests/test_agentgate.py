@@ -238,6 +238,39 @@ class TestLoopAndAudit(unittest.TestCase):
         self.assertTrue(out.executed)
 
 
+class TestToolRegistry(unittest.TestCase):
+    def setUp(self):
+        from agentgate.tools import DEFAULT_TOOL_REGISTRY
+        self.reg = DEFAULT_TOOL_REGISTRY
+
+    def test_lookup(self):
+        self.assertTrue(self.reg.is_registered("gmail_send"))
+        self.assertFalse(self.reg.is_registered("totally_made_up_tool"))
+        self.assertEqual(self.reg.get("gmail_send").target_system, "Gmail")
+
+    def test_enrich_fills_and_tightens(self):
+        # Planner named the tool but left everything else default/empty.
+        req = AR(action_type="API_CALL", tool_name="stripe_create_charge")
+        self.reg.enrich(req)
+        self.assertEqual(req.target_system, "Stripe Sandbox")
+        self.assertFalse(req.rollback_available)          # irreversible tool
+        self.assertIn("payment_related", req.risk_hint)   # inherent risk hint
+
+    def test_enrich_unknown_tool_is_noop(self):
+        req = AR(action_type="API_CALL", tool_name="unknown_tool", target_system="X")
+        before = req.to_dict()
+        self.reg.enrich(req)
+        self.assertEqual(req.to_dict(), before)
+
+    def test_proposal_builder_enriches(self):
+        # Going through the planner path (Proposal -> ActionRequest) applies the registry.
+        from agentgate.planner.base import Proposal
+        p = Proposal(action_type="API_CALL", arguments={"tool_name": "gmail_send", "value": "hi team"})
+        req = p.to_action_request()
+        self.assertEqual(req.target_system, "Gmail")
+        self.assertIn("external_send", req.risk_hint)
+
+
 class TestBenchmark(unittest.TestCase):
     def test_benchmark_runs(self):
         reqs = [AR(action_type="API_CALL", payload_summary="hello"),

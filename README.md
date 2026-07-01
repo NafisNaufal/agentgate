@@ -22,6 +22,9 @@ No dependencies, no API key. Python 3.10+.
 # List the demo scenarios
 python -m agentgate list
 
+# List the registered API tools (tool registry)
+python -m agentgate tools
+
 # Replay a scenario end-to-end through the guardrail
 python -m agentgate run booking_message
 python -m agentgate run sensitive_code
@@ -86,6 +89,7 @@ Decision precedence (strongest wins): `BLOCK > NEED_APPROVAL > ASK_USER > SANITI
 agentgate/
   schemas.py        ActionRequest / DecisionResponse contracts
   action_space.py   registered action vocabulary + validator
+  tools.py          tool registry (tool_name catalog + safety-default enrichment)
   detectors/        the six detectors (incl. action-intent: bulk/destructive/external)
   policy/           policy engine + JSON packs/
   risk.py           risk scoring (noisy-OR + bands)

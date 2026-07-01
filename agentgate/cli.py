@@ -207,6 +207,24 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tools(args: argparse.Namespace) -> int:
+    from .tools import DEFAULT_TOOL_REGISTRY as reg
+
+    print(_c("_b", "Registered tools (by target system):"))
+    for system, names in reg.by_system().items():
+        print(f"  {_c('_b', system)}")
+        for name in names:
+            spec = reg.get(name)
+            flags = []
+            if not spec.rollback_available:
+                flags.append("irreversible")
+            if spec.default_risk_hints:
+                flags.append("hints=" + ",".join(spec.default_risk_hints))
+            tail = _c("_dim", f"  [{'; '.join(flags)}]") if flags else ""
+            print(f"    {name:<26}{tail}")
+    return 0
+
+
 def cmd_eval_suite(args: argparse.Namespace) -> int:
     data = _load_scenario(args.dataset)
     report = evaluate_dataset(data["cases"])
@@ -263,6 +281,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "executor observations from the DE track to make progress)")
     pl.add_argument("--json", action="store_true")
     pl.set_defaults(func=cmd_plan)
+
+    sub.add_parser("tools", help="list the registered API tools (tool registry)").set_defaults(func=cmd_tools)
 
     es = sub.add_parser("eval-suite", help="run the labeled evaluation set (EvalBoard / F16)")
     es.add_argument("--dataset", default="eval_set")
