@@ -1,45 +1,54 @@
-"""MockExecutor: deterministic stand-in for real API/browser execution.
+"""MockExecutor: UNIMPLEMENTED PLACEHOLDER for the Data Engineering (DE) track.
 
-Simulates a small, realistic latency and returns plausible structured output so the
-end-to-end loop, audit log, and raw-vs-guarded benchmark all work tonight with zero
-external dependencies or credentials.
+============================================================================
+ OWNERSHIP: Data Engineering (DE), per PRD F7 (Playwright Browser Executor)
+ and F8 (API Executor). DS built the guardrail engine and the Executor
+ interface (agentgate/executors/base.py) that everything above this layer
+ (loop, router, benchmark, CLI) is written against — but DS does not
+ implement real execution. That is DE's deliverable.
+============================================================================
+
+TODO(DE): implement real connectors here (or in a new module of your own,
+e.g. agentgate/executors/playwright_executor.py / gmail.py / github.py),
+subclassing `Executor` from agentgate/executors/base.py:
+
+    class PlaywrightExecutor(Executor):
+        def execute(self, req: ActionRequest, *, payload: str | None = None) -> ExecutionResult:
+            ...  # real Gmail/GitHub/Stripe API calls, or real Playwright
+                 # browser_open/click/type/select/submit/screenshot
+
+Until that lands, every code path that reaches execution (CLI `run`,
+`benchmark`, `plan`, and the `TestLoopAndAudit`/`TestBenchmark` tests) will
+raise NotImplementedError on purpose — this is not a bug. It marks exactly
+where DE's work begins. See README.md "Ownership: DS vs DA vs DE" for the
+full breakdown.
 """
 
 from __future__ import annotations
 
-import random
-import time
-
-from ..action_space import is_executable
 from ..schemas import ActionRequest
 from .base import ExecutionResult, Executor
 
-# Rough simulated latencies (seconds) per backend so the benchmark has something real
-# to measure. DE's real connectors will replace these numbers.
-_API_LATENCY = (0.015, 0.060)
-_BROWSER_LATENCY = (0.080, 0.220)
-
 
 class MockExecutor(Executor):
+    """Placeholder Executor. Raises until DE implements real execution.
+
+    Kept as a class (not deleted) so the DS-built interface — loop.py, router.py,
+    benchmark.py, cli.py — has something to import and construct against. Only the
+    body of `execute()` is unimplemented; that is the DE deliverable.
+    """
+
     def __init__(self, seed: int | None = 7, simulate_latency: bool = True):
-        self._rng = random.Random(seed)
+        # Kept for signature compatibility with callers; unused by the placeholder.
+        self.seed = seed
         self.simulate_latency = simulate_latency
 
     def execute(self, req: ActionRequest, *, payload: str | None = None) -> ExecutionResult:
-        if not is_executable(req):
-            return ExecutionResult(ok=True, output={"noop": req.action_type}, via="mock")
-
-        via = "browser" if req.action_type.startswith("BROWSER") else "api"
-        lo, hi = _BROWSER_LATENCY if via == "browser" else _API_LATENCY
-        t0 = time.perf_counter()
-        if self.simulate_latency:
-            time.sleep(self._rng.uniform(lo, hi))
-        latency = (time.perf_counter() - t0) * 1000
-
-        output = {
-            "simulated": True,
-            "action_type": req.action_type,
-            "target": req.target or req.tool_name,
-            "payload_used": payload if payload is not None else req.payload_summary,
-        }
-        return ExecutionResult(ok=True, output=output, latency_ms=round(latency, 4), via="mock")
+        raise NotImplementedError(
+            "MockExecutor is a placeholder for the Data Engineering (DE) track "
+            "(PRD F7/F8: Playwright Browser Executor + API Executor). DS has built "
+            "and tested the guardrail engine up to this point — see README.md. "
+            "To implement: subclass Executor in agentgate/executors/base.py and "
+            f"handle action_type={req.action_type!r} target_system={req.target_system!r} "
+            "with a real API call or Playwright action."
+        )

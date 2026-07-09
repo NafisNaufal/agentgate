@@ -20,6 +20,13 @@ Two jobs:
 
 Browser and local-file actions are covered by the action vocabulary (their own verbs),
 so the registry focuses on API tools.
+
+OWNERSHIP: the registry LOGIC (ToolSpec shape, enrichment/safety-tightening) is DS's
+job (part of the planner/loop layer, F2). The CONTENT of `_DEFAULT_TOOLS` below
+(which tools exist, pricing/auth/feasibility) overlaps with DA's API feasibility
+research (PRD: "API matrix"). TODO(DA): review/expand this catalog against your
+feasibility map and flag any tool here that isn't actually available, or any real
+tool that's missing.
 """
 
 from __future__ import annotations
@@ -40,8 +47,6 @@ class ToolSpec:
     description: str = ""
 
 
-# Catalog derived from the PRD Tool Contracts (Gmail, Google Calendar, GitHub, Stripe
-# Sandbox, Telegram, local filesystem) plus the tools used in the demo scenarios.
 _DEFAULT_TOOLS: tuple[ToolSpec, ...] = (
     # --- Gmail ---------------------------------------------------------
     ToolSpec("gmail_search", "Gmail", description="Search the inbox (read-only)."),

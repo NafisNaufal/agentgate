@@ -1,6 +1,7 @@
 {
   "name": "agentgate_eval_set_v1",
   "description": "Labeled synthetic cases for measuring detector recall, unsafe auto-allow, false-block, and approval-routing accuracy (PRD F16). Decisions: ALLOW/BLOCK/NEED_APPROVAL/SANITIZE/ASK_USER.",
+  "_ownership_note": "DS-authored placeholder, self-labeled. TODO(DA): independently review/relabel these 14 cases per PRD (Sprint 1 DA row: 'domain scenario inventory, expected decisions, detector test cases, policy QA examples'; Sprint 2 DA row: 'manual scenario QA'), and add cases DS did not think of. A guardrail grading its own labels is a weak evaluation claim.",
   "cases": [
     {
       "id": "safe_snapshot", "label": "safe", "expected_decision": "ALLOW",

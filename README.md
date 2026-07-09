@@ -7,10 +7,12 @@ file, or external system. The agent's LLM only *proposes*; AgentGate *decides*
 (`ALLOW` / `BLOCK` / `NEED_APPROVAL` / `SANITIZE` / `ASK_USER`); a Decision Router
 *enforces*; and every step is audited.
 
-> This repository is the **DS-owned core** (the "brain" + CLI demo + evaluation +
-> benchmark). Real external connectors (Gmail/GitHub/Stripe/Playwright) and the audit
-> database are the Data Engineer track and plug into the `Executor` interface — see
-> [DS ↔ DE boundary](#ds--de-boundary). Nothing here requires an API key to run.
+> This repository is the **DS-owned core** (the "brain": detectors, policy, risk,
+> decision engine, sanitizer, approval logic, audit logging, custom loop, tool
+> registry, CLI, benchmark, evaluation). Real execution (Gmail/GitHub/Stripe/
+> Playwright), the real audit database, and independent scenario QA are **not** DS's
+> job — see [Ownership: DS vs DA vs DE](#ownership-ds-vs-da-vs-de) below. Nothing here
+> requires an API key to run.
 
 ---
 
@@ -19,29 +21,20 @@ file, or external system. The agent's LLM only *proposes*; AgentGate *decides*
 No dependencies, no API key. Python 3.10+.
 
 ```bash
-# List the demo scenarios
-python -m agentgate list
-
-# List the registered API tools (tool registry)
-python -m agentgate tools
-
-# Replay a scenario end-to-end through the guardrail
-python -m agentgate run booking_message
-python -m agentgate run sensitive_code
-python -m agentgate run productivity_archive --approve-all
-
-# Evaluate a single ad-hoc action
+# --- These work standalone today (pure DS decision logic, no Executor needed) ---
+python -m agentgate list                    # list the demo scenarios
+python -m agentgate tools                   # list the registered tool catalog
+python -m agentgate eval-suite              # labeled evaluation (F16)
 python -m agentgate eval API_CALL --domain code_security --target-system GitHub \
   --payload "deploy key AKIAIOSFODNN7EXAMPLE" --risk-hint external_send
 
-# Labeled evaluation suite (detector recall, unsafe auto-allow, routing accuracy)
-python -m agentgate eval-suite
-
-# Raw-vs-guarded latency benchmark
-python -m agentgate benchmark --repeats 40
-
-# Tests
+# Tests (4 expected failures are intentional — see below, not a bug)
 python -m unittest discover -s tests
+
+# --- These require a real Executor and are BLOCKED until DE implements one ---
+# They print a clear "Blocked: needs DE" message and exit 1 rather than crash.
+python -m agentgate run booking_message
+python -m agentgate benchmark --repeats 40
 ```
 
 ---
@@ -96,10 +89,10 @@ agentgate/
   sanitizer.py      redaction for SANITIZE decisions
   decision.py       DecisionEngine: detectors + policy + risk → DecisionResponse
   approval.py       approval queue / SafetyGuard
-  audit.py          append-only JSONL audit log + completeness metric
+  audit.py          append-only JSONL audit log + completeness metric (DE: real DB)
   router.py         Decision Router / enforcement
   engine.py         AgentGate facade (evaluate + audit + latency timing)
-  executors/        Executor interface (base) + MockExecutor   ← DE seam
+  executors/        Executor interface (base) + MockExecutor   ← DE placeholder, raises
   planner/          Planner interface + ReplayPlanner + optional LLMPlanner
   loop.py           custom function-calling loop (built from scratch)
   benchmark.py      raw-vs-guarded latency benchmark
@@ -118,11 +111,29 @@ sprint_story/       per-sprint DS narrative + slide outline
 **DecisionResponse** — `decision`, `risk_level`, `risk_score`, `reasons[]`,
 `triggered_policies[]`, `sensitive_entities[]`, `sanitized_payload`, `next_step`, `audit_id`.
 
-## DS ↔ DE boundary
+## Ownership: DS vs DA vs DE
 
-DS builds the decision engine against the `Executor` interface
-(`agentgate/executors/base.py`). The DE track implements real connectors behind the
-same `execute(req, payload=None) -> ExecutionResult` signature:
+This repo is DS's deliverable. It is **not** a finished product — two pieces are
+deliberately left as placeholders for teammates, so the repo itself documents the
+team boundary rather than just a slide.
+
+### ✅ DS — built, tested, working now
+Detectors (6), policy engine + 4 packs, risk scoring, decision engine, sanitizer,
+approval queue, audit *logging logic*, decision router, custom function-calling loop,
+tool registry (enrichment logic), ActionRequest/DecisionResponse schema, action-space
+validator, CLI, benchmark harness code, evaluation harness code. 32 tests (28 passing
+standalone).
+
+### 🔧 DE — placeholder in this repo, TODO for you
+| What | Where | Status |
+|---|---|---|
+| Real API connectors (Gmail, GitHub, Stripe, Telegram) | new files under `agentgate/executors/` | not implemented |
+| Playwright browser executor | new file under `agentgate/executors/` | not implemented |
+| Real audit database (SQLite/Postgres) | `agentgate/audit.py` (`AuditLog`) | JSONL file placeholder |
+
+**Start here:** `agentgate/executors/mock.py` — it currently raises
+`NotImplementedError` with a message pointing at exactly what to implement. Subclass
+`Executor` from `agentgate/executors/base.py`:
 
 ```python
 from agentgate.executors import Executor, ExecutionResult
@@ -134,9 +145,26 @@ class GmailExecutor(Executor):
         return ExecutionResult(ok=True, output=..., via="api")
 ```
 
-The shared **ActionRequest** schema (PRD F3) is the contract between the two tracks.
-Until DE's connectors land, `MockExecutor` returns deterministic, latency-simulated
-results so the full loop, audit, and benchmark all work today.
+Wire it into `agentgate/cli.py` (`_build()` and `cmd_plan`) and `agentgate/benchmark.py`
+(`run_benchmark`'s default executor) in place of `MockExecutor`. Once done, remove the
+four `@unittest.expectedFailure` decorators in `tests/test_agentgate.py`
+(`TestLoopAndAudit` + `TestBenchmark`) — they'll go from "expected failure" to a real
+pass, which is your signal it's wired correctly.
+
+The shared **ActionRequest** schema (PRD F3) is the contract between DS and DE — you
+don't need to change anything upstream of the Executor interface.
+
+### 🔧 DA — placeholder in this repo, TODO for you
+| What | Where | Status |
+|---|---|---|
+| Independent scenario labeling / QA | `scenarios/eval_set.json` | DS-authored, self-labeled — needs independent review |
+| Tool catalog / API feasibility cross-check | `agentgate/tools.py` (`_DEFAULT_TOOLS`) | DS-authored from PRD, not DA-verified |
+| Domain & risk taxonomy validation | `agentgate/schemas.py` (`ACTION_TYPES`, `RISK_HINTS`) | DS-authored, needs sign-off |
+| Failure-case analysis / risk taxonomy report | n/a | not started |
+
+`eval_set.json` has an `"_ownership_note"` field at the top explaining exactly what's
+expected. Run `python -m agentgate eval-suite` to see current DS-graded results, then
+add/relabel cases DS wouldn't have thought of.
 
 ## Optional: real LLM planner
 
@@ -164,9 +192,11 @@ The LLM only proposes actions; AgentGate's decisions are unaffected by which mod
 
 Implemented (DS scope): F2 custom loop · F3 ActionRequest builder · F4 core evaluation ·
 F5 sensitive-data detection · F9 decision router & SafetyGuard · F10 approval queue ·
-F11 latency profiler · F12 raw-vs-guarded benchmark · F14 audit log · F15 policy packs ·
-F16 evaluation · CLI demo (part of F13).
+F11 latency profiler (coarse; PRD asks for per-stage — TODO) · F12 raw-vs-guarded
+benchmark · F14 audit log (logic; DE owns real DB) · F15 policy packs · F16 evaluation ·
+CLI demo (part of F13).
 
-Out of scope here (other tracks / post-MVP): real API/browser executors & audit DB (DE),
-Browser Snapshot Builder via Playwright (DE), web Demo Console (FE/PD), Chrome extension /
+Not built here (other tracks / post-MVP, see Ownership section above): real API/browser
+executors & audit DB (DE), Browser Snapshot Builder via Playwright (DE), independent
+scenario QA / taxonomy validation (DA), web Demo Console (FE/PD), Chrome extension /
 MCP / LangGraph adapters (post-MVP).

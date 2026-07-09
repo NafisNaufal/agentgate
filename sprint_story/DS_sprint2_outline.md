@@ -57,10 +57,12 @@ in this repo so every claim is backed by something runnable.
 
 ---
 
-### Live demo run order (≈2 min)
+### Live demo run order (≈2 min) — works standalone, no DE dependency
 ```
 python -m agentgate tools            # the tool registry
-python -m agentgate run booking_message
+python -m agentgate run sensitive_code   # full loop, no execution needed (BLOCK/NEED_APPROVAL only)
 python -m agentgate eval-suite       # evaluation metrics
-python -m agentgate benchmark --repeats 40
 ```
+`run booking_message` and `benchmark` are intentionally **blocked** with a clear
+"needs DE" message until a real Executor lands (see README "Ownership: DS vs DA vs DE") —
+they are not silently mocked as working.

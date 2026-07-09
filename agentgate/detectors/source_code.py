@@ -52,10 +52,11 @@ class SourceCodeDetector(Detector):
         contribution = 0.0
         if code_like:
             contribution = 0.3
-            if "external_send" in req.risk_hint or req.action_type in {
-                "API_CALL",
-                "BROWSER_SUBMIT",
-            }:
+            # Escalate only on real egress: an explicit external_send hint (the tool
+            # registry attaches this to gist/send tools) or a browser submit. A plain
+            # API_CALL is NOT egress — github_read_file / github_commit are reads/writes,
+            # not outbound sends, and must not be over-flagged.
+            if "external_send" in req.risk_hint or req.action_type == "BROWSER_SUBMIT":
                 contribution = 0.6
                 reasons.append("Source code paired with an outbound/send action")
         return self._finding(

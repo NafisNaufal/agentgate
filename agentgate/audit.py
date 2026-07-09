@@ -2,8 +2,13 @@
 
 Every evaluated action is recorded with its request, decision, reasons, entities,
 reviewer/execution status, and timestamp (PRD F14). Default sink is a JSONL file plus
-an in-memory list so the CLI/dashboard can read it back. DE can later point this at a
-real SQLite/Postgres store by subclassing or swapping ``sink``.
+an in-memory list so the CLI/dashboard can read it back.
+
+OWNERSHIP: the logging LOGIC (what gets recorded, when, completeness accounting) is
+DS's job and is complete. The JSONL file is a DS-built placeholder standing in for
+DE's real persistent store (PRD: "SQLite/Postgres audit prototype"). TODO(DE): point
+this at a real database by subclassing AuditLog or swapping the ``sink`` callback —
+no change needed elsewhere in the engine.
 """
 
 from __future__ import annotations

@@ -2,6 +2,10 @@
 
 An Executor actually performs an action once AgentGate has allowed it. The core only
 needs ``execute``; DE implements the real API/browser side behind the same signature.
+
+OWNERSHIP: this interface is DS-authored (part of the guardrail contract). The
+implementation is DE's (PRD F7 Playwright Browser Executor, F8 API Executor).
+See agentgate/executors/mock.py for the current placeholder and TODO.
 """
 
 from __future__ import annotations

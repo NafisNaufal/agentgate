@@ -5,9 +5,16 @@ Commands:
   run <scenario>             replay a scenario end-to-end through the guardrail
   eval                       evaluate a single ad-hoc action (flags below)
   benchmark [scenario...]    raw-vs-guarded latency benchmark
-  audit                      print the audit log from the last run
+  plan <task>                use a real LLM planner, then guard its proposal
+  tools                      list the registered tool catalog
+  eval-suite                 run the labeled evaluation set (EvalBoard)
 
 Runs with zero third-party dependencies and no API key (scenario replay).
+
+EXECUTION STATUS: `run`, `benchmark`, and `plan` require a real Executor and will
+print a clear "Blocked: needs DE" message until the Data Engineering track implements
+one (see agentgate/executors/mock.py). `list`, `tools`, `eval`, and `eval-suite` are
+pure DS-owned decision logic and always work standalone.
 """
 
 from __future__ import annotations
@@ -95,12 +102,22 @@ def _build(scenario: dict, audit_path: Path | None) -> tuple[AgentLoop, AgentGat
     return AgentLoop(gate, router, planner), gate, approvals
 
 
+def _blocked_on_de(exc: NotImplementedError) -> int:
+    print(_c("BLOCK", "\nBlocked: this command needs a real Executor (DE track, PRD F7/F8)."))
+    print(_c("_dim", str(exc)))
+    print(_c("_dim", "DS-owned commands that still work without DE: list, tools, eval, eval-suite."))
+    return 1
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
     audit_path = Path(args.audit) if args.audit else None
     loop, gate, approvals = _build(scenario, audit_path)
     print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected','')}"))
-    result = loop.run(scenario["task"])
+    try:
+        result = loop.run(scenario["task"])
+    except NotImplementedError as exc:
+        return _blocked_on_de(exc)
 
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
@@ -167,7 +184,10 @@ def cmd_benchmark(args: argparse.Namespace) -> int:
             if prop.action_type in ("DONE", "FAIL"):
                 continue
             requests.append(prop.to_action_request())
-    report = run_benchmark(requests, repeats=args.repeats)
+    try:
+        report = run_benchmark(requests, repeats=args.repeats)
+    except NotImplementedError as exc:
+        return _blocked_on_de(exc)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
@@ -195,7 +215,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
     router = DecisionRouter(MockExecutor(simulate_latency=False), approvals, gate.audit)
     loop = AgentLoop(gate, router, planner, max_steps=args.steps)
     print(_c("_dim", f"Planner: {planner.provider}/{planner.model}  |  task: {args.task}"))
-    result = loop.run(args.task)
+    try:
+        result = loop.run(args.task)
+    except NotImplementedError as exc:
+        return _blocked_on_de(exc)
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
     else:
