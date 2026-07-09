@@ -115,7 +115,9 @@ sprint_story/       per-sprint DS narrative + slide outline
 
 This repo is DS's deliverable. It is **not** a finished product — two pieces are
 deliberately left as placeholders for teammates, so the repo itself documents the
-team boundary rather than just a slide.
+team boundary rather than just a slide. The "PRD sprint" column below cites the
+project's milestone calendar (Start 19 Jun 2026 → Launch 2 Oct 2026) so DA/DE know
+*when* each item is expected, not just *what* it is.
 
 ### ✅ DS — built, tested, working now
 Detectors (6), policy engine + 4 packs, risk scoring, decision engine, sanitizer,
@@ -125,11 +127,11 @@ validator, CLI, benchmark harness code, evaluation harness code. 32 tests (28 pa
 standalone).
 
 ### 🔧 DE — placeholder in this repo, TODO for you
-| What | Where | Status |
-|---|---|---|
-| Real API connectors (Gmail, GitHub, Stripe, Telegram) | new files under `agentgate/executors/` | not implemented |
-| Playwright browser executor | new file under `agentgate/executors/` | not implemented |
-| Real audit database (SQLite/Postgres) | `agentgate/audit.py` (`AuditLog`) | JSONL file placeholder |
+| What | Where | Status | PRD sprint |
+|---|---|---|---|
+| Real API connectors (Gmail, GitHub, Stripe, Telegram) | new files under `agentgate/executors/` | not implemented | Sprint 1 (baseline) → Sprint 3 (stabilize) |
+| Playwright browser executor | new file under `agentgate/executors/` | not implemented | Sprint 1 (skeleton) → Sprint 1B (pilot) → Sprint 2 (full pipeline) → Sprint 3 (stabilize) |
+| Real audit database (SQLite/Postgres) | `agentgate/audit.py` (`AuditLog`) | JSONL file placeholder | Sprint 1 (prototype) → Sprint 4 (finalize schema) |
 
 **Start here:** `agentgate/executors/mock.py` — it currently raises
 `NotImplementedError` with a message pointing at exactly what to implement. Subclass
@@ -155,12 +157,12 @@ The shared **ActionRequest** schema (PRD F3) is the contract between DS and DE �
 don't need to change anything upstream of the Executor interface.
 
 ### 🔧 DA — placeholder in this repo, TODO for you
-| What | Where | Status |
-|---|---|---|
-| Independent scenario labeling / QA | `scenarios/eval_set.json` | DS-authored, self-labeled — needs independent review |
-| Tool catalog / API feasibility cross-check | `agentgate/tools.py` (`_DEFAULT_TOOLS`) | DS-authored from PRD, not DA-verified |
-| Domain & risk taxonomy validation | `agentgate/schemas.py` (`ACTION_TYPES`, `RISK_HINTS`) | DS-authored, needs sign-off |
-| Failure-case analysis / risk taxonomy report | n/a | not started |
+| What | Where | Status | PRD sprint |
+|---|---|---|---|
+| Independent scenario labeling / QA | `scenarios/eval_set.json` | DS-authored, self-labeled — needs independent review | Sprint 1 (initial inventory) → Sprint 1B (review pilot logs) → Sprint 2 (manual scenario QA) → Sprint 3 (validate consistency) |
+| Tool catalog / API feasibility cross-check | `agentgate/tools.py` (`_DEFAULT_TOOLS`) | DS-authored from PRD, not DA-verified | Phase 1 (research) → Sprint 2 (API matrix) |
+| Domain & risk taxonomy validation | `agentgate/schemas.py` (`ACTION_TYPES`, `RISK_HINTS`) | DS-authored, needs sign-off | Phase 0 / Phase 2 (taxonomy drafting) → Sprint 2 (domain coverage) |
+| Failure-case analysis / risk taxonomy report | n/a | not started | Sprint 3 → Sprint 4 (evaluation report, domain risk taxonomy) |
 
 `eval_set.json` has an `"_ownership_note"` field at the top explaining exactly what's
 expected. Run `python -m agentgate eval-suite` to see current DS-graded results, then
