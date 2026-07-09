@@ -7,7 +7,6 @@ venv/
 build/
 dist/
 *.jsonl
-audit_*.jsonl
 .DS_Store
 
 # Confidential company documents — kept local, never pushed

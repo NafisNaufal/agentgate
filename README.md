@@ -89,7 +89,7 @@ agentgate/
   sanitizer.py      redaction for SANITIZE decisions
   decision.py       DecisionEngine: detectors + policy + risk → DecisionResponse
   approval.py       approval queue / SafetyGuard
-  audit.py          append-only JSONL audit log + completeness metric (DE: real DB)
+  audit.py          in-memory audit log + completeness metric (DE: real persistence)
   router.py         Decision Router / enforcement
   engine.py         AgentGate facade (evaluate + audit + latency timing)
   executors/        Executor interface (base) + MockExecutor   ← DE placeholder, raises
@@ -123,15 +123,15 @@ project's milestone calendar (Start 19 Jun 2026 → Launch 2 Oct 2026) so DA/DE 
 Detectors (6), policy engine + 4 packs, risk scoring, decision engine, sanitizer,
 approval queue, audit *logging logic*, decision router, custom function-calling loop,
 tool registry (enrichment logic), ActionRequest/DecisionResponse schema, action-space
-validator, CLI, benchmark harness code, evaluation harness code. 32 tests (28 passing
-standalone).
+validator, CLI, benchmark harness code, evaluation harness code. 35 tests (31 passing
+standalone; 4 expected failures pending DE's real Executor).
 
 ### 🔧 DE — placeholder in this repo, TODO for you
 | What | Where | Status | PRD sprint |
 |---|---|---|---|
 | Real API connectors (Gmail, GitHub, Stripe, Telegram) | new files under `agentgate/executors/` | not implemented | Sprint 1 (baseline) → Sprint 3 (stabilize) |
 | Playwright browser executor | new file under `agentgate/executors/` | not implemented | Sprint 1 (skeleton) → Sprint 1B (pilot) → Sprint 2 (full pipeline) → Sprint 3 (stabilize) |
-| Real audit database (SQLite/Postgres) | `agentgate/audit.py` (`AuditLog`) | JSONL file placeholder | Sprint 1 (prototype) → Sprint 4 (finalize schema) |
+| Real audit database (SQLite/Postgres) | `agentgate/audit.py` (`AuditLog`) | in-memory only — no persistence layer at all | Sprint 1 (prototype) → Sprint 4 (finalize schema) |
 
 **Start here:** `agentgate/executors/mock.py` — it currently raises
 `NotImplementedError` with a message pointing at exactly what to implement. Subclass
@@ -152,6 +152,12 @@ Wire it into `agentgate/cli.py` (`_build()` and `cmd_plan`) and `agentgate/bench
 four `@unittest.expectedFailure` decorators in `tests/test_agentgate.py`
 (`TestLoopAndAudit` + `TestBenchmark`) — they'll go from "expected failure" to a real
 pass, which is your signal it's wired correctly.
+
+For the audit database: `AuditLog` is deliberately in-memory only (`agentgate/audit.py`)
+— it does not write to disk at all, so there's nothing DS-built to rip out. Either
+subclass `AuditLog` and override `_flush()` with real inserts, or pass a `sink`
+callback to `AuditLog(sink=...)` that does the same without subclassing — `sink` is
+called with a plain dict on every `record()`/`update()`.
 
 The shared **ActionRequest** schema (PRD F3) is the contract between DS and DE — you
 don't need to change anything upstream of the Executor interface.

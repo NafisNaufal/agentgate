@@ -95,8 +95,8 @@ def _print_run(result: RunResult) -> None:
     print(_c("_b", f"\nResult: ") + f"{result.status} — {result.final_message}")
 
 
-def _build(scenario: dict, audit_path: Path | None) -> tuple[AgentLoop, AgentGate, ApprovalQueue]:
-    gate = AgentGate(audit_path=str(audit_path) if audit_path else None)
+def _build(scenario: dict) -> tuple[AgentLoop, AgentGate, ApprovalQueue]:
+    gate = AgentGate()
     approvals = ApprovalQueue()
     router = DecisionRouter(MockExecutor(), approvals, gate.audit)
     planner = ReplayPlanner(scenario["steps"])
@@ -112,8 +112,7 @@ def _blocked_on_de(exc: NotImplementedError) -> int:
 
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
-    audit_path = Path(args.audit) if args.audit else None
-    loop, gate, approvals = _build(scenario, audit_path)
+    loop, gate, approvals = _build(scenario)
     print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected','')}"))
     try:
         result = loop.run(scenario["task"])
@@ -276,7 +275,6 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="replay a scenario through the guardrail")
     r.add_argument("scenario")
     r.add_argument("--json", action="store_true")
-    r.add_argument("--audit", help="write audit JSONL to this path")
     r.add_argument("--approve-all", action="store_true", help="auto-approve pending items (demo)")
     r.set_defaults(func=cmd_run)
 

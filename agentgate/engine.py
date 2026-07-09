@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from .audit import AuditLog
 from .decision import DecisionEngine
@@ -40,10 +39,9 @@ class AgentGate:
         detectors: list[Detector] | None = None,
         policy_engine: PolicyEngine | None = None,
         audit_log: AuditLog | None = None,
-        audit_path: str | Path | None = None,
     ):
         self.decider = DecisionEngine(detectors=detectors, policy_engine=policy_engine)
-        self.audit = audit_log if audit_log is not None else AuditLog(path=audit_path)
+        self.audit = audit_log if audit_log is not None else AuditLog()
         self.last_timings = StageTimings()
 
     def evaluate(self, req: ActionRequest, *, write_audit: bool = True) -> DecisionResponse:

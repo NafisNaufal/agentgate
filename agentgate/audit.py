@@ -1,23 +1,23 @@
 """Audit log.
 
 Every evaluated action is recorded with its request, decision, reasons, entities,
-reviewer/execution status, and timestamp (PRD F14). Default sink is a JSONL file plus
-an in-memory list so the CLI/dashboard can read it back.
+reviewer/execution status, and timestamp (PRD F14). In-memory only.
 
 OWNERSHIP: the logging LOGIC (what gets recorded, when, completeness accounting) is
-DS's job and is complete. The JSONL file is a DS-built placeholder standing in for
-DE's real persistent store (PRD: "SQLite/Postgres audit prototype"). TODO(DE): point
-this at a real database by subclassing AuditLog or swapping the ``sink`` callback —
-no change needed elsewhere in the engine.
+DS's job, is complete, and is what DS's own measured PRD metric (Audit Completeness
+>=95%) is proven against - see completeness() below, exercised by
+tests/test_agentgate.py and benchmarks/coverage_eval.py without needing any storage
+backend. Persistent storage (PRD: "SQLite/Postgres audit prototype") is explicitly
+DE's Sprint 1 deliverable, not DS's - so this class does NOT write to disk. TODO(DE):
+implement real persistence by subclassing AuditLog and overriding ``_flush``, or by
+passing a ``sink`` callback (e.g. one that inserts into your database) to __init__.
 """
 
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable
 
 from .schemas import ActionRequest, DecisionResponse
@@ -47,13 +47,12 @@ class AuditRecord:
 
 
 class AuditLog:
-    def __init__(self, path: str | Path | None = None, sink: Callable[[dict], None] | None = None):
+    def __init__(self, sink: Callable[[dict], None] | None = None):
         self.records: list[AuditRecord] = []
         self._by_id: dict[str, AuditRecord] = {}
-        self.path = Path(path) if path else None
+        # Optional hook DE can use for real persistence (e.g. insert into a real DB)
+        # without subclassing. DS provides the interface point; DE provides the sink.
         self._sink = sink
-        if self.path:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(self, req: ActionRequest, decision: DecisionResponse) -> str:
         audit_id = "aud_" + uuid.uuid4().hex[:12]
@@ -106,10 +105,6 @@ class AuditLog:
         return round(complete / len(self.records), 4)
 
     def _flush(self, rec: AuditRecord) -> None:
-        line = json.dumps(rec.to_dict())
-        if self.path:
-            # Append-only JSONL; simplest durable sink for the MVP.
-            with self.path.open("a") as fh:
-                fh.write(line + "\n")
+        # In-memory only by design (see module docstring: persistence is DE's job).
         if self._sink:
             self._sink(rec.to_dict())
