@@ -26,6 +26,7 @@ from pathlib import Path
 
 from .approval import ApprovalQueue
 from .benchmark import run_benchmark
+from .detectors import get_default_detectors
 from .engine import AgentGate
 from .evaluation import evaluate_dataset
 from .executors import MockExecutor
@@ -152,7 +153,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
         risk_hint=args.risk_hint or [],
         confidence=args.confidence,
     )
-    gate = AgentGate()
+    gate = AgentGate(detectors=get_default_detectors(llm_injection=args.llm_detector))
     decision = gate.evaluate(req, write_audit=False)
     if args.json:
         print(decision.to_json())
@@ -250,7 +251,8 @@ def cmd_tools(args: argparse.Namespace) -> int:
 
 def cmd_eval_suite(args: argparse.Namespace) -> int:
     data = _load_scenario(args.dataset)
-    report = evaluate_dataset(data["cases"])
+    gate = AgentGate(detectors=get_default_detectors(llm_injection=args.llm_detector))
+    report = evaluate_dataset(data["cases"], gate=gate)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
@@ -288,6 +290,10 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--context", default="")
     e.add_argument("--risk-hint", action="append")
     e.add_argument("--confidence", type=float, default=1.0)
+    e.add_argument("--llm-detector", action="store_true",
+                    help="use the Gemma-backed hybrid injection detector (needs local "
+                         "Ollama + gemma3:4b: `ollama pull gemma3:4b`); falls back to "
+                         "regex-only if Ollama is unreachable")
     e.add_argument("--json", action="store_true")
     e.set_defaults(func=cmd_eval)
 
@@ -309,6 +315,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     es = sub.add_parser("eval-suite", help="run the labeled evaluation set (EvalBoard / F16)")
     es.add_argument("--dataset", default="eval_set")
+    es.add_argument("--llm-detector", action="store_true",
+                     help="use the Gemma-backed hybrid injection detector (needs local "
+                          "Ollama + gemma3:4b); falls back to regex-only if unreachable")
     es.add_argument("--json", action="store_true")
     es.set_defaults(func=cmd_eval_suite)
 
