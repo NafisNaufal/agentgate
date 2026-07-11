@@ -40,6 +40,21 @@ class TestActionSpace(unittest.TestCase):
             validate_proposal("BROWSER_CLICK", {})
         validate_proposal("BROWSER_CLICK", {"element_id": "5"})  # ok
 
+    def test_cli_eval_rejects_off_vocabulary_before_evaluating(self):
+        # The CLI's `eval` command builds an ActionRequest directly (no Proposal in
+        # the loop), so it needs its own tool-call-parser check - this guards against
+        # that check silently going missing again.
+        import io
+        from contextlib import redirect_stdout
+        from agentgate.cli import build_parser
+
+        args = build_parser().parse_args(["eval", "TELEPORT"])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            exit_code = args.func(args)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("REJECTED", buf.getvalue())
+
 
 class TestBaselineEvaluator(unittest.TestCase):
     def test_clean_action_allows(self):

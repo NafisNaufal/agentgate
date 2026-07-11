@@ -18,6 +18,7 @@ import json
 import sys
 from pathlib import Path
 
+from .action_space import ACTION_TYPES
 from .baseline import evaluate_baseline
 from .loop import AgentLoop, RunResult
 from .planner import ReplayPlanner
@@ -76,6 +77,13 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
+    # Tool-call parser (action_space.py): reject off-vocabulary action types before
+    # they ever reach evaluation, same as the loop does for a planner's proposals.
+    if args.action_type not in ACTION_TYPES:
+        print(_c("BLOCK", f"REJECTED: '{args.action_type}' is not a registered action_type."))
+        print(_c("_dim", f"Allowed: {', '.join(sorted(ACTION_TYPES))}"))
+        return 1
+
     req = ActionRequest(
         action_type=args.action_type,
         domain=args.domain,
