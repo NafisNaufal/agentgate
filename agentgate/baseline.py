@@ -1,5 +1,4 @@
 """Baseline action evaluation.
-
 Grew out of Phase 1's "research ... detector baseline" and became this concrete
 module in Phase 3 ("prototype ... a baseline action evaluation"). It is intentionally
 a single, small, rule-based evaluator - not the full detector suite, policy engine,
