@@ -16,17 +16,53 @@ The full lifecycle works end to end: a detector suite, policy engine, risk scori
 and sanitizer are all implemented and wired into the CLI. Real execution connectors
 and persistent audit storage are still ahead — see [Status](#status).
 
-## Quick start
+## Setup from scratch
 
-Pure Python, no third-party dependencies, no API key required for the default
-(regex-based) detectors.
+Requires **Python 3.10+**. Pure stdlib, no third-party dependencies — the default
+(regex-based) detectors need nothing beyond a clone.
 
 ```bash
-python -m agentgate list
-python -m agentgate tools
-python -m agentgate run booking_message
-python -m agentgate eval API_CALL --payload "key AKIAIOSFODNN7EXAMPLE"
-python -m unittest discover -s tests
+git clone https://github.com/NafisNaufal/agentgate.git
+cd agentgate
+```
+
+**Option A — run the setup script** (checks Python, installs [Ollama](https://ollama.com)
+if it's missing, pulls the default LLM-detector model, smoke-tests both the regex
+and hybrid paths):
+
+```bash
+./scripts/setup.sh              # macOS / Linux
+./scripts/setup.sh --no-ollama  # skip Ollama entirely if you only want the regex default
+```
+```powershell
+.\scripts\setup.ps1              # Windows (PowerShell)
+.\scripts\setup.ps1 -NoOllama    # skip Ollama entirely if you only want the regex default
+```
+
+**Option B — do it manually.** For the regex-only default, nothing but the clone is
+needed:
+
+```bash
+python3 -m agentgate list
+python3 -m agentgate tools
+python3 -m agentgate run booking_message
+python3 -m agentgate eval API_CALL --payload "key AKIAIOSFODNN7EXAMPLE"
+python3 -m unittest discover -s tests
+```
+
+To also use the LLM-based detector architectures (`hybrid` / `llm_first` /
+`unified` — see [Detector architectures](#detector-architectures)), install Ollama
+first, then pull a model:
+
+| OS | Install Ollama |
+|---|---|
+| macOS | `brew install ollama`, or download from [ollama.com/download](https://ollama.com/download) |
+| Linux | `curl -fsSL https://ollama.com/install.sh \| sh` |
+| Windows | `winget install --id Ollama.Ollama -e`, or download from [ollama.com/download](https://ollama.com/download) |
+
+```bash
+ollama serve                # if it isn't already running as a background service
+ollama pull qwen2.5:1.5b    # the model this project's bake-off recommends (see below)
 ```
 
 ## How it works
@@ -66,10 +102,31 @@ detection categories where rules alone miss paraphrased attacks:
 | `llm_first` | Every action goes through the LLM directly | `--architecture llm_first` |
 | `unified` | One LLM call classifies across all risk categories at once | `--architecture unified` |
 
+Select an architecture with the `--architecture` flag on `run`/`eval`, or set it
+once for the whole shell via `AGENTGATE_DETECTOR_ARCHITECTURE`:
+
 ```bash
-ollama pull qwen2.5:1.5b   # or another model
 python -m agentgate eval API_CALL --context "some text" --architecture hybrid
+# or:
+export AGENTGATE_DETECTOR_ARCHITECTURE=hybrid
+python -m agentgate run booking_message
 ```
+
+To pick which model the LLM architectures call, either pull a different model and
+set `AGENTGATE_LLM_DETECTOR_MODEL` (defaults to `gemma3:4b` if unset), or point at
+a non-default Ollama host with `OLLAMA_HOST`:
+
+```bash
+ollama pull gemma3:4b
+export AGENTGATE_LLM_DETECTOR_MODEL=gemma3:4b
+```
+
+**Note:** `hybrid` still needs Ollama running — it only *skips* the LLM call when
+regex already resolves a case, it isn't LLM-free. If Ollama isn't reachable, every
+LLM-backed architecture fails safe (falls back to "no finding" for that detector
+rather than crashing), so a misconfigured Ollama setup degrades silently instead of
+erroring — worth checking `ollama serve` is actually running if `hybrid`/`llm_first`
+results look like plain regex.
 
 ### Bake-off results
 
@@ -155,6 +212,7 @@ agentgate/
   cli.py               CLI demo (list / tools / run / eval)
 scenarios/            demo scenarios for the replay planner
 benchmarks/           detector architecture bake-off + labeled eval data
+scripts/              setup.sh / setup.ps1 - one-command environment setup
 tests/                unittest suite
 ```
 

@@ -89,8 +89,12 @@ def score_injection(cases: list[dict], preds: list[tuple[int, float]]) -> dict:
     }
 
 
-def run_injection_test(cases: list[dict], models: list[str]) -> list[dict]:
+_INJECTION_ARCHS = {"hybrid": HybridPromptInjectionDetector, "llm_first": LLMFirstInjectionDetector}
+
+
+def run_injection_test(cases: list[dict], models: list[str], architectures: list[str] | None = None) -> list[dict]:
     rows = []
+    architectures = architectures or list(_INJECTION_ARCHS)
 
     # Baseline: regex only, no LLM.
     det = PromptInjectionDetector()
@@ -102,7 +106,8 @@ def run_injection_test(cases: list[dict], models: list[str]) -> list[dict]:
     rows.append({"architecture": "regex", "model": "-", **score_injection(cases, preds)})
 
     for model in models:
-        for arch_name, cls in (("hybrid", HybridPromptInjectionDetector), ("llm_first", LLMFirstInjectionDetector)):
+        for arch_name in architectures:
+            cls = _INJECTION_ARCHS[arch_name]
             det = cls(model=model, extra_options=CPU_ONLY, timeout=90.0)
             preds = []
             failed = False
@@ -201,17 +206,27 @@ def render_table(rows: list[dict], cols: list[str]) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--models", default="qwen2.5:1.5b,gemma3:1b,gemma3:4b")
+    ap.add_argument(
+        "--architectures", default="hybrid,llm_first",
+        help="comma-separated subset of hybrid,llm_first to run in Test 1 (Test 2 always runs unified)",
+    )
+    ap.add_argument("--skip-coverage", action="store_true", help="skip Test 2 (unified, multi-category)")
     args = ap.parse_args()
     models = [m.strip() for m in args.models.split(",") if m.strip()]
+    architectures = [a.strip() for a in args.architectures.split(",") if a.strip()]
 
     print(__doc__.split("Usage:")[0])
-    print(f"Models under test: {models}\n")
+    print(f"Models under test: {models}")
+    print(f"Architectures under test (Test 1): {architectures}\n")
 
-    print("=== Test 1: prompt-injection detection (42 cases) — regex vs hybrid vs llm_first ===")
+    print("=== Test 1: prompt-injection detection (42 cases) — regex vs " + " vs ".join(architectures) + " ===")
     injection_cases = load_cases(ROOT / "benchmarks" / "data" / "injection_eval.json")
-    rows1 = run_injection_test(injection_cases, models)
+    rows1 = run_injection_test(injection_cases, models, architectures)
     print()
     print(render_table(rows1, ["f1", "precision", "recall", "evasion_recall", "hardbenign_fp", "lat_p50_ms"]))
+
+    if args.skip_coverage:
+        return 0
 
     print("\n\n=== Test 2: multi-category action classification (31 cases) — regex vs unified ===")
     coverage_cases = load_cases(ROOT / "benchmarks" / "data" / "coverage_eval.json")
