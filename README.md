@@ -111,11 +111,6 @@ first and only calls a local LLM when regex genuinely can't tell, so most action
 never pay for a model call, but paraphrased attacks still get caught. `llm_first`
 sends everything to the LLM directly, no regex fast-path.
 
-(A third option, `unified` — one LLM call judging every risk category at once
-instead of running six separate detectors — was built and benchmarked too, but it
-scored worse than plain regex and let some unsafe actions through, so it was
-removed rather than kept as a worse choice. See [Bake-off results](#bake-off-results).)
-
 | Architecture | How it works | Select with |
 |---|---|---|
 | `hybrid` (default) | Regex fast-path; LLM only when regex is unsure | `--architecture hybrid` |
@@ -189,13 +184,6 @@ production model choice.
 - `gemma3:4b` gets the best raw accuracy (perfect recall, F1 0.957) but at 5-6x the
   latency of qwen2.5:1.5b — a real trade-off, not a clear win, especially before
   re-measuring on the real (slower per-core, but far more parallel) server hardware.
-
-A third architecture, `unified` (one LLM call classifying every risk category at
-once, replacing all six regex detectors), was also benchmarked but removed from the
-codebase: it scored decision accuracy 0.742-0.806 against the full regex engine's
-0.968, and two of three models tested let genuinely unsafe actions through
-(nonzero unsafe-auto-allow) — the one metric this project's PRD treats as a hard
-0% target. Not a viable replacement, so it isn't kept around as a worse option.
 
 **Working recommendation:** `hybrid` is the default. Use a small model
 (`qwen2.5:1.5b`) day to day; `gemma3:4b` is a fallback if the extra latency is

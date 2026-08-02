@@ -12,10 +12,6 @@ motivated the choice):
                 DEFAULT architecture: if Ollama isn't running, this fails safe and
                 behaves exactly like plain regex - nothing breaks without it.
   "llm_first" - every action goes through the LLM directly, no regex fast-path.
-
-("unified" - one LLM call classifying every risk category at once - was tried and
-benchmarked, but underperformed the plain regex engine and let some unsafe actions
-through, so it was removed rather than kept as a worse option.)
 """
 
 import os

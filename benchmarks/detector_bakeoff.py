@@ -15,11 +15,6 @@ Single-category (prompt injection) test, on benchmarks/data/injection_eval.json:
 compares regex-only vs Architecture A (hybrid) vs Architecture B (llm-first), each
 run across every model in --models.
 
-(A third architecture, "unified" - one LLM call classifying every risk category at
-once, replacing the whole detector list - was built and benchmarked here too, but
-it underperformed the plain regex engine and let some unsafe actions through, so it
-was removed from the codebase entirely rather than kept as a worse option.)
-
 Usage:
   ollama pull qwen2.5:1.5b gemma3:1b gemma3:4b   # whichever you want to compare
   ollama serve                                    # if not already running
