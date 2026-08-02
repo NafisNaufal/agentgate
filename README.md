@@ -75,7 +75,7 @@ Ollama and pull a model:
 
 ```bash
 ollama serve                # if it isn't already running as a background service
-ollama pull qwen2.5:1.5b    # the model this project's bake-off recommends (see below)
+ollama pull qwen2.5:7b      # the model this project's bake-off recommends (see below)
 ```
 </details>
 
@@ -128,13 +128,13 @@ python -m agentgate run booking_message
 ```
 
 To pick which model the LLM architectures call, either pull a different model and
-set `AGENTGATE_LLM_DETECTOR_MODEL` (defaults to `qwen2.5:1.5b` if unset, matching
+set `AGENTGATE_LLM_DETECTOR_MODEL` (defaults to `qwen2.5:7b` if unset, matching
 what `scripts/setup.sh` pulls), or point at a non-default Ollama host with
 `OLLAMA_HOST`:
 
 ```bash
-ollama pull gemma3:4b
-export AGENTGATE_LLM_DETECTOR_MODEL=gemma3:4b
+ollama pull qwen2.5:1.5b
+export AGENTGATE_LLM_DETECTOR_MODEL=qwen2.5:1.5b
 ```
 
 **Note:** `hybrid` being the default does not mean Ollama is required. It only
@@ -158,39 +158,69 @@ models/architectures below as informative, and the *absolute* millisecond number
 as approximate only. Re-run this exact script on the real host before finalizing a
 production model choice.
 
+**Architecture comparison** (regex vs. hybrid vs. llm_first, `qwen2.5:1.5b`):
+
 | architecture | model | f1 | precision | recall | evasion_recall | hardbenign_fp | p50 latency |
 |---|---|---|---|---|---|---|---|
 | regex | – | 0.625 | 1.0 | 0.455 | 0.0 | 0.0 | 0.0ms |
 | hybrid | qwen2.5:1.5b | 0.952 | 1.0 | 0.909 | 0.833 | 0.0 | 387.5ms |
 | llm_first | qwen2.5:1.5b | 0.842 | 1.0 | 0.727 | 0.833 | 0.0 | 392.5ms |
-| hybrid | gemma3:1b | 0.733 | 0.579 | 1.0 | 1.0 | 0.875 | 556.3ms |
-| llm_first | gemma3:1b | 0.733 | 0.579 | 1.0 | 1.0 | 0.875 | 568.1ms |
-| hybrid | gemma3:4b | 0.957 | 0.917 | 1.0 | 1.0 | 0.25 | 2055.0ms |
-| llm_first | gemma3:4b | 0.957 | 0.917 | 1.0 | 1.0 | 0.25 | 1972.0ms |
 
-**Reading it:**
-- Regex alone never has a false positive (precision 1.0) but misses over half of
-  paraphrased/evasion-style injections (recall 0.455, evasion_recall 0.0) — this is
-  exactly the gap the LLM architectures exist to close.
-- `hybrid` + `qwen2.5:1.5b` is the standout: regex's fast path already resolves the
-  easy cases, so only the ambiguous remainder goes to the LLM — recall jumps to
-  0.909 and evasion_recall to 0.833, zero false positives on hard-benign text, at
-  ~388ms p50. `llm_first` with the same model does worse (recall 0.727) despite
-  paying the same per-call latency, because it never gets the benefit of regex's
-  certain matches.
-- `gemma3:1b` is not viable at either architecture — it flags 87.5% of hard-benign
-  cases as injections (hardbenign_fp 0.875), which would make the guardrail
-  unusable in practice.
-- `gemma3:4b` gets the best raw accuracy (perfect recall, F1 0.957) but at 5-6x the
-  latency of qwen2.5:1.5b — a real trade-off, not a clear win, especially before
-  re-measuring on the real (slower per-core, but far more parallel) server hardware.
+`hybrid` beats `llm_first` on the same model because regex's fast path already
+resolves the easy cases, leaving the LLM only the genuinely ambiguous remainder —
+`llm_first` gets no such help and classifies everything cold. That's why the model
+sweep below only tests `hybrid`.
 
-**Working recommendation:** `hybrid` is the default. Use a small model
-(`qwen2.5:1.5b`) day to day; `gemma3:4b` is a fallback if the extra latency is
-acceptable for higher recall. Avoid `gemma3:1b` in any architecture. A broader
-model sweep (more sizes/families) is in progress — this table will be updated once
-it's done. This should also be re-validated once the script is run on the actual
-deployment VM.
+**Model sweep within `hybrid`** (7 models against the 42-case eval set; latency not
+a selection factor per the PM's ask — accuracy is):
+
+| model | f1 | precision | recall | evasion_recall | hardbenign_fp | p50 latency |
+|---|---|---|---|---|---|---|
+| qwen2.5:1.5b | 0.846 | 0.733 | 1.0 | 1.0 | 0.625 | 368.2ms |
+| qwen2.5:3b | 0.955 | 0.955 | 0.955 | 0.917 | 0.0 | 617.1ms |
+| **qwen2.5:7b** | 0.952 | 1.0 | 0.909 | 0.833 | 0.0 | 1251.5ms |
+| gemma3:4b | 0.93 | 0.952 | 0.909 | 0.833 | 0.125 | 2224.0ms |
+| gemma3:12b | 1.0 | 1.0 | 1.0 | 1.0 | 0.0 | 6713.6ms |
+| llama3.1:8b | 0.9 | 1.0 | 0.818 | 0.667 | 0.0 | 1309.2ms |
+| phi4 | 0.9 | 1.0 | 0.818 | 0.667 | 0.0 | 2355.7ms |
+
+**Important methodology lesson, not just a results table:** the eval-set numbers
+above do not by themselves determine the pick. Two models that scored well here
+were checked against the three demo scenarios (`booking_message`, `sensitive_code`,
+`productivity_archive` — real action text, not in the 42-case set) and failed:
+
+- `qwen2.5:3b` looked like the standout on paper, but reliably false-positived on
+  an ordinary bulk-archive action and a payment-message send in the demo
+  scenarios, run repeatedly. Not visible in the eval-set numbers at all.
+- `gemma3:12b` scored a perfect 1.0 here, but also false-positived on the
+  `sensitive_code` scenario, and at 7-30 seconds per call in practice it's edging
+  toward the request timeout for basically no accuracy benefit over smaller models.
+
+`qwen2.5:7b` is the only model that came back clean across all three demo
+scenarios, checked repeatedly (5/5 on the case that broke every other model). Its
+eval-set F1 (0.952) is very good, not literally the top number, but it's the one
+result that's actually been cross-checked against real out-of-distribution action
+text rather than just the benchmark's own labeled set.
+
+Two real bugs surfaced and were fixed during this cross-checking, both worth
+knowing about since they affected every model's numbers above:
+1. `ActionRequest.scan_text` was including the same payload twice (once raw, once
+   whitespace-flattened) whenever a payload had newlines — duplicated content in
+   the prompt reads as suspicious to an LLM classifier, and it was also silently
+   double-counting entities for the regex detectors. Fixed to dedupe on
+   whitespace-normalized content.
+2. The injection-detection system prompt originally asked the model to also flag
+   "data-exfiltration attempts," which overlaps with what `SourceCodeDetector` /
+   `PaymentPhishingDetector` already own — it was overriding their intended
+   `NEED_APPROVAL` outcome with `BLOCK` on every model tested. Narrowed the prompt
+   to instruction-override attempts only; the numbers above reflect the fix.
+
+**Working recommendation:** `hybrid` is the default architecture, `qwen2.5:7b` is
+the recommended model — the only one validated clean against real scenario text,
+not just the eval set. `qwen2.5:1.5b`/`qwen2.5:3b` are lighter options if
+resources are tight, but re-check them against real traffic before trusting them;
+don't take a perfect eval-set score as the final word. This should also be
+re-validated once the script is run on the actual deployment VM.
 
 ## Project layout
 
@@ -232,9 +262,9 @@ tests/                unittest suite
 **Latency budget:** target is P95 ≤ 250ms for rule-based evaluation. Regex-based
 evaluation runs in low single-digit milliseconds. The default `hybrid` architecture
 only pays LLM latency for the cases regex can't resolve on its own — see
-[Bake-off results](#bake-off-results) above for measured numbers (~388ms p50 for
-the recommended hybrid + qwen2.5:1.5b combination, CPU-only on the benchmark
-laptop).
+[Bake-off results](#bake-off-results) above for measured numbers (~572ms p50 for
+the recommended hybrid + qwen2.5:7b combination, CPU-only on the benchmark
+laptop; accuracy was prioritized over latency for this model choice).
 
 **Evaluation metrics (defined, measured once a labeled harness lands):** completion
 rate, decision accuracy, unsafe auto-allow rate (target 0%), false-block rate,

@@ -97,14 +97,24 @@ class ActionRequest:
     def scan_text(self) -> str:
         """All free text a detector should inspect, de-duplicated.
 
-        raw_payload and payload_summary are often identical; including both would
-        double-count every detected entity, so we keep only distinct fragments.
+        raw_payload and payload_summary are often the same content in different
+        forms (payload_summary whitespace-flattens raw_payload for multi-line
+        text), so exact-string dedup misses them and the same content gets
+        included twice - which double-counts regex entities and, worse, makes
+        genuinely benign text look like it's been duplicated/obfuscated to an
+        LLM classifier. Dedup on whitespace-normalized content instead.
         """
-        seen: list[str] = []
+        seen: set[str] = set()
+        parts: list[str] = []
         for t in (self.raw_payload, self.payload_summary, self.content_context, self.target):
-            if t and t not in seen:
-                seen.append(t)
-        return "\n".join(seen)
+            if not t:
+                continue
+            normalized = " ".join(t.split())
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            parts.append(t)
+        return "\n".join(parts)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ActionRequest":

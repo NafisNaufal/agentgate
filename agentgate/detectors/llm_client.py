@@ -40,7 +40,7 @@ def chat_json(
     detector benchmark to get honest no-GPU numbers; production code leaves this
     unset so it uses GPU acceleration when available).
     """
-    model = model or os.environ.get("AGENTGATE_LLM_DETECTOR_MODEL", "qwen2.5:1.5b")
+    model = model or os.environ.get("AGENTGATE_LLM_DETECTOR_MODEL", "qwen2.5:7b")
     host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
     options = {"temperature": 0}

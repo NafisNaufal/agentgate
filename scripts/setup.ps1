@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-$DefaultModel = "qwen2.5:1.5b"
+$DefaultModel = "qwen2.5:7b"
 
 Write-Host "== 1/4: Checking Python =="
 $py = Get-Command python -ErrorAction SilentlyContinue

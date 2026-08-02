@@ -12,7 +12,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-DEFAULT_MODEL="qwen2.5:1.5b"
+DEFAULT_MODEL="qwen2.5:7b"
 SKIP_OLLAMA=0
 for arg in "$@"; do
   [ "$arg" = "--no-ollama" ] && SKIP_OLLAMA=1
