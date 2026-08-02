@@ -52,7 +52,7 @@ class HybridPromptInjectionDetector(Detector):
         if regex_finding.triggered:
             return regex_finding  # fast path: already confident, skip the model call
 
-        text = "\n".join(t for t in (req.content_context, req.scan_text) if t).strip()
+        text = req.scan_text  # already folds in content_context; don't duplicate it here
         if not text:
             return regex_finding  # nothing to scan
 

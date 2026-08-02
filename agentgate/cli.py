@@ -6,9 +6,11 @@ Commands:
   run <scenario>    replay a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
 
-Runs with zero third-party dependencies and no API key by default (regex-only
-detectors). Pass --architecture to opt into an LLM-based detector architecture
-(requires a local Ollama server) - see agentgate/detectors/__init__.py.
+Runs with zero third-party dependencies and no API key required. The default
+detector architecture is "hybrid": it uses a local Ollama server if one is running
+to catch paraphrased prompt-injection attempts regex alone would miss, but never
+requires it - without Ollama it fails safe and behaves like plain regex. Pass
+--architecture to change it - see agentgate/detectors/__init__.py.
 """
 
 from __future__ import annotations
@@ -151,9 +153,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 def _add_architecture_flag(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "--architecture", choices=["regex", "hybrid", "llm_first", "unified"], default=None,
-        help="detector architecture for prompt-injection detection (default: regex, "
-             "zero-dependency). hybrid/llm_first/unified require a local Ollama server.",
+        "--architecture", choices=["regex", "hybrid", "llm_first"], default=None,
+        help="detector architecture for prompt-injection detection (default: hybrid; "
+             "uses Ollama if running, fails safe to regex-only behavior if not). "
+             "'regex' forces zero-dependency mode explicitly.",
     )
 
 

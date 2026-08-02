@@ -39,7 +39,7 @@ class LLMFirstInjectionDetector(Detector):
         self.extra_options = extra_options
 
     def scan(self, req: ActionRequest) -> Finding:
-        text = "\n".join(t for t in (req.content_context, req.scan_text) if t).strip()
+        text = req.scan_text  # already folds in content_context; don't duplicate it here
         if not text:
             return self._finding()
 

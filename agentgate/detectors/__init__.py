@@ -3,18 +3,19 @@
 Each detector is a small, independently testable unit. The decision engine runs all
 of them over an ActionRequest and aggregates their findings.
 
-DEFAULT_DETECTORS is the zero-dependency, regex-only set - no network/model calls,
-always available. Three LLM-based architectures for the fuzzy detection categories
-(prompt injection, primarily) were built and benchmarked (see
-benchmarks/detector_bakeoff.py) rather than picked by guess:
+DEFAULT_DETECTORS is the regex-only set - no network/model calls, always available.
+Two LLM-based architectures augment prompt-injection detection specifically (see
+benchmarks/detector_bakeoff.py for the measured accuracy/latency numbers that
+motivated the choice):
 
-  A. "hybrid"    - regex fast-path, LLM fallback only when regex finds nothing
-  B. "llm_first" - every action goes through the LLM directly, no regex fast-path
-  C. "unified"   - one LLM call classifies across ALL categories, replacing the
-                   regex detector list entirely rather than augmenting it
+  "hybrid"    - regex fast-path, LLM fallback only when regex finds nothing.
+                DEFAULT architecture: if Ollama isn't running, this fails safe and
+                behaves exactly like plain regex - nothing breaks without it.
+  "llm_first" - every action goes through the LLM directly, no regex fast-path.
 
-All three require a local Ollama server; DEFAULT_DETECTORS is unaffected if you
-don't opt in.
+("unified" - one LLM call classifying every risk category at once - was tried and
+benchmarked, but underperformed the plain regex engine and let some unsafe actions
+through, so it was removed rather than kept as a worse option.)
 """
 
 import os
@@ -28,9 +29,8 @@ from .prompt_injection import PromptInjectionDetector
 from .intent import ActionIntentDetector
 from .injection_hybrid import HybridPromptInjectionDetector
 from .injection_llm_first import LLMFirstInjectionDetector
-from .unified_llm import UnifiedLLMDetector
 
-# Zero-dependency default: regex-only, no network/model calls, always available.
+# Zero-dependency detector set: regex-only, no network/model calls, always available.
 DEFAULT_DETECTORS: list[Detector] = [
     PIIDetector(),
     SecretDetector(),
@@ -40,29 +40,25 @@ DEFAULT_DETECTORS: list[Detector] = [
     ActionIntentDetector(),
 ]
 
-_ARCHITECTURES = {"regex", "hybrid", "llm_first", "unified"}
+_ARCHITECTURES = {"regex", "hybrid", "llm_first"}
 
 
 def get_default_detectors(architecture: str | None = None) -> list[Detector]:
     """Build the detector list for a given injection-detection architecture.
 
-    architecture: one of "regex" (default), "hybrid", "llm_first", "unified".
-    None reads the AGENTGATE_DETECTOR_ARCHITECTURE env var, defaulting to "regex"
-    if unset. All non-"regex" options require a local Ollama server - see
-    benchmarks/detector_bakeoff.py for the measured accuracy/latency trade-offs
-    that motivated "hybrid" as the recommended default when an LLM is available.
+    architecture: one of "regex", "hybrid" (default), "llm_first". None reads the
+    AGENTGATE_DETECTOR_ARCHITECTURE env var, defaulting to "hybrid" if unset.
+    "hybrid" and "llm_first" use a local Ollama server if one is running, but never
+    require it to be - both fail safe to a "no finding" result (same as regex would
+    give) if Ollama is unreachable.
     """
     if architecture is None:
-        architecture = os.environ.get("AGENTGATE_DETECTOR_ARCHITECTURE", "regex")
+        architecture = os.environ.get("AGENTGATE_DETECTOR_ARCHITECTURE", "hybrid")
     if architecture not in _ARCHITECTURES:
         raise ValueError(f"Unknown architecture {architecture!r}; expected one of {_ARCHITECTURES}")
 
     if architecture == "regex":
         return list(DEFAULT_DETECTORS)
-
-    if architecture == "unified":
-        # Replaces the whole detector list with one multi-category LLM call.
-        return [UnifiedLLMDetector(), ActionIntentDetector()]
 
     injection_cls = HybridPromptInjectionDetector if architecture == "hybrid" else LLMFirstInjectionDetector
     return [
@@ -86,7 +82,6 @@ __all__ = [
     "ActionIntentDetector",
     "HybridPromptInjectionDetector",
     "LLMFirstInjectionDetector",
-    "UnifiedLLMDetector",
     "DEFAULT_DETECTORS",
     "get_default_detectors",
 ]

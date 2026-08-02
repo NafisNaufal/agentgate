@@ -1,8 +1,8 @@
 """Shared local-LLM client for the detector architectures in this package.
 
-Talks to a local Ollama server (``ollama serve``) over its HTTP API. Used by all
-three LLM-based detector architectures (hybrid, llm-first, unified) so the request/
-retry/fail-safe logic lives in exactly one place.
+Talks to a local Ollama server (``ollama serve``) over its HTTP API. Used by both
+LLM-based detector architectures (hybrid, llm-first) so the request/retry/fail-safe
+logic lives in exactly one place.
 
 Fails safe by design: callers get a `LLMUnavailable` exception on any network/parse
 problem and are expected to degrade to a non-LLM fallback rather than crash
@@ -40,7 +40,7 @@ def chat_json(
     detector benchmark to get honest no-GPU numbers; production code leaves this
     unset so it uses GPU acceleration when available).
     """
-    model = model or os.environ.get("AGENTGATE_LLM_DETECTOR_MODEL", "gemma3:4b")
+    model = model or os.environ.get("AGENTGATE_LLM_DETECTOR_MODEL", "qwen2.5:1.5b")
     host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
     options = {"temperature": 0}
