@@ -1,9 +1,10 @@
 """Planner interface and the Proposal -> ActionRequest bridge (F2 / F3).
 
 A Proposal is the planner's raw suggestion. ``to_action_request`` normalizes it into
-the shared ActionRequest contract the baseline evaluator reads. (Tool Registry
-enrichment - auto-tagging a tool's inherent risk - is Sprint 1-2 scope, not yet
-built at this Phase 3 prototype stage.)
+the shared ActionRequest contract the DecisionEngine reads. (Tool Registry
+enrichment - auto-tagging a tool's inherent risk on the request itself - is not yet
+wired in here; the registry's shape is defined in tools.py but the planner doesn't
+consult it yet.)
 """
 
 from __future__ import annotations

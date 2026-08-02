@@ -1,9 +1,9 @@
-"""Custom function-calling loop (Phase 3 prototype).
+"""Custom function-calling loop (Sprint 1).
 
-Prototype of the propose -> evaluate -> enforce lifecycle, built from scratch (no
-OpenClaw / MCP / LangGraph dependency), per the PRD: "prototype DS-led custom
-function-calling loop". Uses the baseline evaluator (agentgate/baseline.py), not the
-full detector/policy engine, which is Sprint 1+ scope.
+The propose -> evaluate -> enforce lifecycle, built from scratch (no OpenClaw / MCP /
+LangGraph dependency), per the PRD: "custom function-calling loop". Uses the full
+DecisionEngine (detectors + policy engine + risk scoring + sanitizer) - the Phase 3
+baseline evaluator this loop used to call is superseded by it.
 
 One of the custom-loop risks identified in Phase 0 ("define custom loop risks") is a
 planner that fails outright - a live LLM call can time out, error, or return
@@ -13,11 +13,12 @@ bad planner call doesn't take down the whole run.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from .action_space import ActionSpaceError, is_terminal
-from .baseline import evaluate_baseline
+from .decision import DecisionEngine
 from .planner.base import Planner, Proposal
 from .router import DecisionRouter, EnforcementOutcome
 from .schemas import ActionRequest, DecisionResponse
@@ -31,6 +32,7 @@ class StepRecord:
     decision: DecisionResponse | None = None
     outcome: EnforcementOutcome | None = None
     rejected_reason: str = ""
+    eval_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -40,6 +42,7 @@ class StepRecord:
             "decision": self.decision.to_dict() if self.decision else None,
             "outcome": {"status": self.outcome.status, "message": self.outcome.message} if self.outcome else None,
             "rejected_reason": self.rejected_reason,
+            "eval_ms": self.eval_ms,
         }
 
 
@@ -60,10 +63,17 @@ class RunResult:
 
 
 class AgentLoop:
-    def __init__(self, planner: Planner, router: DecisionRouter | None = None, max_steps: int = 12):
+    def __init__(
+        self,
+        planner: Planner,
+        router: DecisionRouter | None = None,
+        max_steps: int = 12,
+        decider: DecisionEngine | None = None,
+    ):
         self.planner = planner
         self.router = router or DecisionRouter()
         self.max_steps = max_steps
+        self.decider = decider or DecisionEngine()
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
         result = RunResult(task=task)
@@ -90,9 +100,11 @@ class AgentLoop:
                 break
 
             req = proposal.to_action_request()
-            decision = evaluate_baseline(req)
+            t0 = time.perf_counter()
+            decision = self.decider.evaluate(req)
+            eval_ms = round((time.perf_counter() - t0) * 1000, 4)
             outcome = self.router.route(req, decision)
-            result.steps.append(StepRecord(i, proposal, req, decision, outcome))
+            result.steps.append(StepRecord(i, proposal, req, decision, outcome, eval_ms=eval_ms))
 
             observation = {"last_outcome": outcome.status, "last_decision": decision.decision.value}
         else:

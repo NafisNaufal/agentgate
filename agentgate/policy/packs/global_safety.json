@@ -1,0 +1,40 @@
+{
+  "name": "global_safety_policy",
+  "description": "Cross-domain safety rules applied to every action.",
+  "rules": [
+    {
+      "id": "global.prompt_injection",
+      "description": "Content tries to override instructions or exfiltrate data.",
+      "entity_kinds_any": ["PROMPT_INJECTION"],
+      "decision": "BLOCK",
+      "risk_floor": "HIGH",
+      "reason": "Possible prompt injection detected; the proposed action is blocked"
+    },
+    {
+      "id": "global.destructive_no_rollback",
+      "description": "Destructive action that cannot be undone.",
+      "risk_hints_any": ["destructive_action"],
+      "requires_no_rollback": true,
+      "decision": "NEED_APPROVAL",
+      "risk_floor": "HIGH",
+      "reason": "Irreversible destructive action requires human approval"
+    },
+    {
+      "id": "global.low_confidence_high_impact",
+      "description": "Planner is unsure about an externally-impactful action.",
+      "action_types": ["API_CALL", "BROWSER_SUBMIT", "BROWSER_CLICK"],
+      "min_confidence": 0.5,
+      "decision": "NEED_APPROVAL",
+      "risk_floor": "MEDIUM",
+      "reason": "Low planner confidence on an impactful action; routing to approval"
+    },
+    {
+      "id": "global.credential_request",
+      "description": "Message asks a user for credentials (phishing).",
+      "entity_kinds_any": ["CREDENTIAL_REQUEST"],
+      "decision": "BLOCK",
+      "risk_floor": "CRITICAL",
+      "reason": "Action requests credentials from a user (phishing pattern); blocked"
+    }
+  ]
+}

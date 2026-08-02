@@ -1,14 +1,14 @@
-"""AgentGate CLI demo contract (Phase 3 prototype).
+"""AgentGate CLI demo (Sprint 1).
 
-Two commands, proving the propose -> evaluate -> enforce lifecycle end to end without
-a real LLM key or external system:
-
-  run <scenario>   replay a scenario through the baseline evaluator
+Commands:
+  list              list available scenarios
+  tools             list the registered tool catalog
+  run <scenario>    replay a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
 
-Runs with zero third-party dependencies. This is intentionally a small subset of the
-full CLI contract (list/tools/eval-suite/benchmark/plan follow in Sprint 1+, once the
-detector suite, policy engine, tool registry, and evaluation harness exist).
+Runs with zero third-party dependencies and no API key by default (regex-only
+detectors). Pass --architecture to opt into an LLM-based detector architecture
+(requires a local Ollama server) - see agentgate/detectors/__init__.py.
 """
 
 from __future__ import annotations
@@ -19,11 +19,13 @@ import sys
 from pathlib import Path
 
 from .action_space import ACTION_TYPES
-from .baseline import evaluate_baseline
+from .decision import DecisionEngine
+from .detectors import get_default_detectors
 from .loop import AgentLoop, RunResult
 from .planner import ReplayPlanner
 from .router import DecisionRouter
 from .schemas import ActionRequest
+from .tools import ToolRegistry
 
 ROOT = Path(__file__).resolve().parent.parent
 SCENARIO_DIR = ROOT / "scenarios"
@@ -47,6 +49,10 @@ def _load_scenario(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _scenarios() -> list[Path]:
+    return sorted(SCENARIO_DIR.glob("*.json"))
+
+
 def _print_run(result: RunResult) -> None:
     print(_c("_b", "\nTask: ") + result.task)
     for s in result.steps:
@@ -55,18 +61,49 @@ def _print_run(result: RunResult) -> None:
             continue
         d = s.decision
         print(f"  [{s.index}] {s.proposal.action_type:<16} -> {_c(d.decision.value, d.decision.value)} "
-              f"{_c('_dim', f'risk={d.risk_level.value} score={d.risk_score}')}")
+              f"{_c('_dim', f'risk={d.risk_level.value} score={d.risk_score} {s.eval_ms:.2f}ms')}")
         for r in d.reasons:
             print(f"        • {r}")
+        if d.triggered_policies:
+            print(f"        {_c('_dim', 'policies: ' + ', '.join(d.triggered_policies))}")
+        if d.sanitized_payload:
+            print(f"        {_c('SANITIZE', 'sanitized:')} {d.sanitized_payload[:90]}")
         if s.outcome:
             print(f"        {_c('_dim', s.outcome.status + ' — ' + s.outcome.message)}")
     print(_c("_b", "\nResult: ") + f"{result.status} — {result.final_message}")
 
 
+def cmd_list(_: argparse.Namespace) -> int:
+    print(_c("_b", "Available scenarios:"))
+    for p in _scenarios():
+        data = json.loads(p.read_text())
+        if "steps" not in data:  # skip labeled eval sets, if any land here later
+            continue
+        print(f"  {_c('_b', data['name']):<28} {data.get('title', '')}")
+        print(f"  {'':<2}{_c('_dim', data.get('expected', ''))}")
+    return 0
+
+
+def cmd_tools(_: argparse.Namespace) -> int:
+    reg = ToolRegistry()
+    print(_c("_b", "Registered tools:"))
+    for name in reg.names():
+        spec = reg.get(name)
+        flags = []
+        if not spec.rollback_available:
+            flags.append("irreversible")
+        if spec.default_risk_hints:
+            flags.append("hints=" + ",".join(spec.default_risk_hints))
+        tail = _c("_dim", f"  [{'; '.join(flags)}]") if flags else ""
+        print(f"  {name:<20} {spec.target_system:<16}{tail}")
+    return 0
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
     planner = ReplayPlanner(scenario["steps"])
-    loop = AgentLoop(planner, DecisionRouter())
+    decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
+    loop = AgentLoop(planner, DecisionRouter(), decider=decider)
     print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected', '')}"))
     result = loop.run(scenario["task"])
     if args.json:
@@ -96,7 +133,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
         risk_hint=args.risk_hint or [],
         confidence=args.confidence,
     )
-    decision = evaluate_baseline(req)
+    decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
+    decision = decider.evaluate(req)
     if args.json:
         print(decision.to_json())
     else:
@@ -104,16 +142,32 @@ def cmd_eval(args: argparse.Namespace) -> int:
               f"risk={decision.risk_level.value} score={decision.risk_score}")
         for r in decision.reasons:
             print(f"  • {r}")
+        if decision.triggered_policies:
+            print(f"  policies: {', '.join(decision.triggered_policies)}")
+        if decision.sanitized_payload:
+            print(f"  sanitized: {decision.sanitized_payload}")
     return 0
 
 
+def _add_architecture_flag(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--architecture", choices=["regex", "hybrid", "llm_first", "unified"], default=None,
+        help="detector architecture for prompt-injection detection (default: regex, "
+             "zero-dependency). hybrid/llm_first/unified require a local Ollama server.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="agentgate", description="AgentGate CLI demo (Phase 3 prototype)")
+    p = argparse.ArgumentParser(prog="agentgate", description="AgentGate CLI demo (Sprint 1)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    r = sub.add_parser("run", help="replay a scenario through the baseline evaluator")
+    sub.add_parser("list", help="list available scenarios").set_defaults(func=cmd_list)
+    sub.add_parser("tools", help="list the registered tool catalog").set_defaults(func=cmd_tools)
+
+    r = sub.add_parser("run", help="replay a scenario through the decision engine")
     r.add_argument("scenario")
     r.add_argument("--json", action="store_true")
+    _add_architecture_flag(r)
     r.set_defaults(func=cmd_run)
 
     e = sub.add_parser("eval", help="evaluate a single ad-hoc action")
@@ -127,6 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--risk-hint", action="append")
     e.add_argument("--confidence", type=float, default=1.0)
     e.add_argument("--json", action="store_true")
+    _add_architecture_flag(e)
     e.set_defaults(func=cmd_eval)
 
     return p

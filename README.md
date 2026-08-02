@@ -12,16 +12,18 @@ task → planner proposes a tool call → AgentGate evaluates it → router enfo
        → allow / block / need approval / sanitize / ask user
 ```
 
-This is an early prototype. The propose → evaluate → enforce lifecycle works end to
-end today with a small rule-based evaluator; a full detector suite, policy engine,
-tool registry, and real execution layer are in active development. See
-[Status](#status) below for what's built vs planned.
+The full lifecycle works end to end: a detector suite, policy engine, risk scoring,
+and sanitizer are all implemented and wired into the CLI. Real execution connectors
+and persistent audit storage are still ahead — see [Status](#status).
 
 ## Quick start
 
-Pure Python, no third-party dependencies, no API key required.
+Pure Python, no third-party dependencies, no API key required for the default
+(regex-based) detectors.
 
 ```bash
+python -m agentgate list
+python -m agentgate tools
 python -m agentgate run booking_message
 python -m agentgate eval API_CALL --payload "key AKIAIOSFODNN7EXAMPLE"
 python -m unittest discover -s tests
@@ -32,100 +34,172 @@ python -m unittest discover -s tests
 - **`schemas.py`** — the two contracts everything is built around: `ActionRequest`
   (a proposed action, normalized) and `DecisionResponse` (allow/block/approve/
   sanitize/ask, with reasons).
-- **`action_space.py`** — a closed vocabulary of action verbs (`API_CALL`,
-  `BROWSER_CLICK`, `FILE_READ`, …); anything outside it is rejected before
-  evaluation.
-- **`planner/`** — proposes the next action. Two implementations: a deterministic
-  scenario-replay planner (used in tests/demos, no API key needed) and an optional
-  live LLM planner (Gemini/OpenAI/Anthropic/OpenRouter via one env var).
-- **`baseline.py`** — the evaluator. Currently a small set of rule-based checks
-  (secret-like patterns, payment language, bulk operations, destructive verbs)
-  proving the evaluation concept; this is the piece that grows into a full
-  detector + policy engine.
+- **`action_space.py`** — a closed vocabulary of action verbs; anything outside it
+  is rejected before evaluation.
+- **`planner/`** — proposes the next action. A deterministic scenario-replay
+  planner (no API key needed) and an optional live LLM planner.
+- **`detectors/`** — six detectors (PII, secrets, source code, payment/phishing,
+  prompt injection, action-intent) plus three LLM-based architectures for the
+  fuzzy detection categories — see [Detector architectures](#detector-architectures).
+- **`policy/`** — declarative JSON policy packs per domain, matched against
+  detector findings.
+- **`risk.py`** — combines detector findings into a risk score and band.
+- **`sanitizer.py`** — redacts detected sensitive content for `SANITIZE` decisions.
+- **`decision.py`** — ties detectors + policy + risk + sanitizer together into one
+  `DecisionResponse`.
 - **`router.py`** — enforces the decision so a risky action is never silently
   allowed to proceed.
-- **`loop.py`** — the function-calling loop tying it together, built from scratch
-  rather than depending on a specific agent framework.
-- **`tools.py`** — the shape of a tool registry (what a registered tool records:
-  target system, whether it's reversible, its inherent risk). Defined with a
-  couple of illustrative entries; not yet consulted by the loop or planner.
+- **`loop.py`** — the function-calling loop, built from scratch.
+- **`tools.py`** — the shape of a tool registry, with illustrative entries; not yet
+  consulted by the loop or planner.
+
+## Detector architectures
+
+The regex-based detectors are the zero-dependency default. Three additional
+architectures use a local LLM (via [Ollama](https://ollama.com)) for the fuzzy
+detection categories where rules alone miss paraphrased attacks:
+
+| Architecture | How it works | Select with |
+|---|---|---|
+| `regex` (default) | No LLM at all | — |
+| `hybrid` | Regex fast-path; LLM only when regex finds nothing | `--architecture hybrid` |
+| `llm_first` | Every action goes through the LLM directly | `--architecture llm_first` |
+| `unified` | One LLM call classifies across all risk categories at once | `--architecture unified` |
+
+```bash
+ollama pull qwen2.5:1.5b   # or another model
+python -m agentgate eval API_CALL --context "some text" --architecture hybrid
+```
+
+### Bake-off results
+
+Measured with `benchmarks/detector_bakeoff.py` against 42 labeled prompt-injection
+cases and 31 labeled multi-category action cases.
+
+**Hardware caveat:** run locally on an Apple M4 laptop (arm64, 10 cores, 16GB RAM,
+Metal GPU) with Ollama's `num_gpu` forced to `0` to approximate CPU-only inference.
+The real deployment target is a 48-core x86 VM, 377GB RAM, **no GPU at all**
+(confirmed via `nvidia-smi` / `lspci` on that host). Apple Silicon and generic x86
+server cores are not the same hardware — treat the *relative* ranking between
+models/architectures below as informative, and the *absolute* millisecond numbers
+as approximate only. Re-run this exact script on the real host before finalizing a
+production model choice.
+
+**Test 1 — prompt injection (regex vs. hybrid vs. llm_first):**
+
+| architecture | model | f1 | precision | recall | evasion_recall | hardbenign_fp | p50 latency |
+|---|---|---|---|---|---|---|---|
+| regex | – | 0.625 | 1.0 | 0.455 | 0.0 | 0.0 | 0.0ms |
+| hybrid | qwen2.5:1.5b | 0.952 | 1.0 | 0.909 | 0.833 | 0.0 | 387.5ms |
+| llm_first | qwen2.5:1.5b | 0.842 | 1.0 | 0.727 | 0.833 | 0.0 | 392.5ms |
+| hybrid | gemma3:1b | 0.733 | 0.579 | 1.0 | 1.0 | 0.875 | 556.3ms |
+| llm_first | gemma3:1b | 0.733 | 0.579 | 1.0 | 1.0 | 0.875 | 568.1ms |
+| hybrid | gemma3:4b | 0.957 | 0.917 | 1.0 | 1.0 | 0.25 | 2055.0ms |
+| llm_first | gemma3:4b | 0.957 | 0.917 | 1.0 | 1.0 | 0.25 | 1972.0ms |
+
+**Test 2 — multi-category action classification (regex engine vs. unified):**
+
+| architecture | model | decision accuracy | unsafe auto-allow | p50 latency |
+|---|---|---|---|---|
+| regex (full engine) | – | 0.968 | 0.0 | 0.2ms |
+| unified | qwen2.5:1.5b | 0.742 | 0.143 | 527.1ms |
+| unified | gemma3:1b | 0.677 | 0.095 | 1015.0ms |
+| unified | gemma3:4b | 0.806 | 0.0 | 3181.6ms |
+
+**Reading it:**
+- Regex alone never has a false positive (precision 1.0) but misses over half of
+  paraphrased/evasion-style injections (recall 0.455, evasion_recall 0.0) — this is
+  exactly the gap the LLM architectures exist to close.
+- `hybrid` + `qwen2.5:1.5b` is the standout: regex's fast path already resolves the
+  easy cases, so only the ambiguous remainder goes to the LLM — recall jumps to
+  0.909 and evasion_recall to 0.833, zero false positives on hard-benign text, at
+  ~388ms p50. `llm_first` with the same model does worse (recall 0.727) despite
+  paying the same per-call latency, because it never gets the benefit of regex's
+  certain matches.
+- `gemma3:1b` is not viable at either architecture — it flags 87.5% of hard-benign
+  cases as injections (hardbenign_fp 0.875), which would make the guardrail
+  unusable in practice.
+- `gemma3:4b` gets the best raw accuracy (perfect recall, F1 0.957) but at 5-6x the
+  latency of qwen2.5:1.5b — a real trade-off, not a clear win, especially before
+  re-measuring on the real (slower per-core, but far more parallel) server hardware.
+- `unified` (one LLM call replacing the whole detector layer) underperforms the
+  plain regex `DecisionEngine` on every model tested, and two of the three models
+  produce a nonzero unsafe-auto-allow rate — the one metric this project's PRD
+  treats as a hard target of 0%. This architecture is not recommended as a
+  replacement for the regex-based decision engine; LLM detectors are better used to
+  augment specific weak spots (like `hybrid` does for prompt injection) than to
+  replace the whole layer.
+
+**Working recommendation:** keep `regex` as the zero-dependency default, and use
+`hybrid` with a small model (`qwen2.5:1.5b`) as the opt-in upgrade for
+prompt-injection coverage. `gemma3:4b` is a fallback if the extra latency is
+acceptable for higher recall. Avoid `unified` and avoid `gemma3:1b` in any
+architecture. This should be re-validated once the script is run on the actual
+deployment VM.
 
 ## Project layout
 
 ```
 agentgate/
-  schemas.py        ActionRequest / DecisionResponse contracts
-  action_space.py    registered action vocabulary + validator
-  baseline.py        rule-based action evaluator
-  router.py          decision enforcement
-  loop.py            function-calling loop
-  tools.py           tool registry shape (defined, not yet wired in)
-  planner/           planner interface, replay planner, optional LLM planner
-  cli.py             CLI demo (run / eval)
-scenarios/           example scenario for the replay planner
-tests/               unittest suite
+  schemas.py         ActionRequest / DecisionResponse contracts
+  action_space.py     registered action vocabulary + validator
+  detectors/           six regex detectors + three LLM architectures
+  policy/               policy engine + JSON packs
+  risk.py              risk scoring
+  sanitizer.py         redaction for SANITIZE decisions
+  decision.py          DecisionEngine: detectors + policy + risk + sanitizer
+  router.py            decision enforcement
+  loop.py              function-calling loop
+  tools.py             tool registry shape (defined, not yet wired in)
+  planner/              planner interface, replay planner, optional LLM planner
+  cli.py               CLI demo (list / tools / run / eval)
+scenarios/            demo scenarios for the replay planner
+benchmarks/           detector architecture bake-off + labeled eval data
+tests/                unittest suite
 ```
 
 ## Design notes
 
-A few decisions worth writing down before more gets built on top of them.
-
 **Known risks in a custom agent loop, and how each is handled here:**
 - *An untrusted planner proposes something unsafe, or doesn't flag its own risk* —
-  by design, the planner only proposes; `baseline.py` (soon a full detector suite)
-  makes the safety call independently, so nothing depends on the planner being
-  honest about risk.
+  the planner only proposes; the DecisionEngine judges independently.
 - *Malformed or off-vocabulary tool calls* — rejected by `action_space.py` before
   they ever reach evaluation.
 - *A run that never terminates* — bounded by `max_steps`, plus explicit `DONE`/
   `FAIL` terminal actions.
 - *The planner itself fails* (a live LLM call times out or errors) — caught in
-  `loop.py` and turned into a failed run with a clear reason, not an uncaught
+  `loop.py`, turned into a failed run with a clear reason, not an uncaught
   exception.
 - *Schema drift as more pieces get added* — the `ActionRequest` /
-  `DecisionResponse` contract in `schemas.py` is meant to stay stable; detectors,
-  policies, and real connectors are expected to build against it rather than
-  change it.
+  `DecisionResponse` contract in `schemas.py` is meant to stay stable.
 
-**Latency budget:** guardrail evaluation should stay well under the tool-call
-latency it's gating — target is P95 ≤ 250ms for rule-based evaluation (the current
-baseline evaluator runs in low single-digit milliseconds), so the guardrail doesn't
-become the bottleneck once real execution is wired in.
+**Latency budget:** target is P95 ≤ 250ms for rule-based evaluation. Regex-based
+evaluation runs in low single-digit milliseconds. LLM-based detector architectures
+are opt-in specifically because they cost real latency — see
+[Bake-off results](#bake-off-results) above for measured numbers (~388ms p50 for
+the recommended hybrid + qwen2.5:1.5b combination, CPU-only on the benchmark
+laptop).
 
-**Evaluation metrics (defined here, measured once the harness exists):** completion
-rate, decision accuracy against labeled cases, unsafe auto-allow rate (target 0%),
-false-block rate, approval-routing accuracy, and sensitive-data detection recall.
-
-**Raw-vs-guarded benchmark plan:** once a real executor exists, compare P50/P95
-latency of running an action directly against running it through `evaluate()` first;
-target overhead is small enough (roughly ≤20%) that the guardrail doesn't make the
-agent feel slower than it has to.
+**Evaluation metrics (defined, measured once a labeled harness lands):** completion
+rate, decision accuracy, unsafe auto-allow rate (target 0%), false-block rate,
+approval-routing accuracy, sensitive-data detection recall.
 
 ## Status
 
 **Working now:** the full lifecycle (propose → validate → evaluate → enforce) runs
-end to end via the CLI and is covered by tests. The action vocabulary, contracts,
-and planner interface are stable. The tool registry's shape is defined (`tools.py`)
-with illustrative entries, ahead of being wired into the planner.
+end to end via the CLI. Detectors, policy engine, risk scoring, sanitizer, and
+decision engine are implemented and tested. Three LLM-based detector architectures
+are built and benchmarked (opt-in, not the default).
 
 **In progress / planned next:**
-- A full detector suite (PII, secrets, source code, payment/phishing, prompt
-  injection) replacing the current rule-based baseline evaluator.
-- A declarative policy engine and domain-specific policy packs.
 - Wiring the tool registry into the planner, with a full tool catalog and
-  per-tool safety defaults (e.g. an irreversible tool auto-tagged as such even
-  if nothing in its payload looks risky).
+  per-tool safety defaults.
 - Real execution connectors (Gmail, GitHub, Stripe, browser automation) behind a
-  stable executor interface — the evaluation logic above does not depend on how
-  actions are ultimately executed, so this plugs in without changing anything
-  upstream.
-- Persistent audit storage and an evaluation harness with labeled test data
-  reviewed independently of whoever implements the detectors, to keep the
-  accuracy numbers honest.
-
-The design goal throughout is that later pieces (detectors, policies, real
-connectors) slot into the existing `ActionRequest` → `DecisionResponse` contract
-without changing the pieces built so far.
+  stable executor interface, and an approval queue for `NEED_APPROVAL` decisions —
+  both Data Engineering scope, built against the existing decision contract.
+- Persistent audit storage.
+- A labeled evaluation harness with test data reviewed independently of whoever
+  implements the detectors, to keep the accuracy numbers honest.
 
 ## Optional: live LLM planner
 

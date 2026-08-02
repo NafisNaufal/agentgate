@@ -1,10 +1,10 @@
-"""Decision Router (Phase 3 prototype).
+"""Decision Router (Sprint 1).
 
-Enforces the decision returned by the baseline evaluator so BLOCK / NEED_APPROVAL /
+Enforces the decision returned by the DecisionEngine so BLOCK / NEED_APPROVAL /
 ASK_USER / SANITIZE are never silently ignored. There is no real Executor or
-Approval Queue yet - those are Sprint 1+ deliverables - so the router's job at this
-stage is to translate a decision into the correct next step, proving the enforcement
-concept without yet performing real execution or persistence.
+Approval Queue yet - those are Data Engineering's Sprint 1+ deliverables - so the
+router's job at this stage is to translate a decision into the correct next step,
+proving the enforcement concept without yet performing real execution or persistence.
 """
 
 from __future__ import annotations
@@ -23,20 +23,21 @@ class EnforcementOutcome:
 class DecisionRouter:
     def route(self, req: ActionRequest, decision: DecisionResponse) -> EnforcementOutcome:
         if decision.decision == Decision.BLOCK:
-            return EnforcementOutcome("blocked", "Action blocked by the baseline evaluator")
+            return EnforcementOutcome("blocked", "Action blocked by the guardrail")
         if decision.decision == Decision.NEED_APPROVAL:
             return EnforcementOutcome(
                 "awaiting_approval",
-                "Action requires human approval (approval queue: Sprint 1+ scope)",
+                "Action requires human approval (approval queue: Data Engineering scope)",
             )
         if decision.decision == Decision.ASK_USER:
             return EnforcementOutcome("ask_user", "User confirmation required before continuing")
         if decision.decision == Decision.SANITIZE:
             return EnforcementOutcome(
                 "sanitize_pending",
-                "Payload sanitization required (sanitizer: Sprint 1+ scope)",
+                "Payload sanitized; would execute the redacted version via a real "
+                "Executor (Data Engineering scope)",
             )
         return EnforcementOutcome(
             "would_execute",
-            "Allowed - would run via a real Executor (Sprint 1+ Data Engineering scope)",
+            "Allowed - would run via a real Executor (Data Engineering scope)",
         )
