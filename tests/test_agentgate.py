@@ -223,6 +223,34 @@ class TestDecisionEngine(unittest.TestCase):
             tool_name="gmail_archive", payload_summary="archive 500 promotional emails"))
         self.assertEqual(d.decision, Decision.NEED_APPROVAL)
 
+    def test_low_confidence_bulk_action_asks_user_not_approval(self):
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="productivity", tool_name="gmail_mark_read",
+            payload_summary="mark_as_read query=is:unread affected_items=2400", confidence=0.60))
+        self.assertEqual(d.decision, Decision.ASK_USER)
+
+    def test_high_confidence_bulk_action_still_needs_approval(self):
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="productivity", tool_name="gmail_archive",
+            payload_summary="archive query=subject:newsletter affected_items=320", confidence=0.92))
+        self.assertEqual(d.decision, Decision.NEED_APPROVAL)
+
+    def test_low_confidence_does_not_soften_a_block(self):
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="code_security", target_system="GitHub",
+            payload_summary="token AKIAIOSFODNN7EXAMPLE", risk_hint=["external_send"],
+            confidence=0.4))
+        self.assertEqual(d.decision, Decision.BLOCK)
+
+    def test_bulk_pii_export_to_external_blocks(self):
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="code_security", target="analytics@partner.com",
+            payload_summary="export_and_send query=SELECT * FROM customers send to analytics@partner.com",
+            risk_hint=["external_send", "bulk_action"]))
+        self.assertEqual(d.decision, Decision.BLOCK)
+        self.assertEqual(d.risk_level, RiskLevel.CRITICAL)
+        self.assertIn("global.bulk_pii_egress", d.triggered_policies)
+
     def test_accumulation_caps_at_high_not_critical(self):
         d = self.engine.evaluate(AR(
             action_type="BROWSER_CLICK", domain="booking_style", target="2",

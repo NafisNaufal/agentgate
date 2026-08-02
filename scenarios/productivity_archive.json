@@ -24,7 +24,7 @@
       "target_system": "Gmail",
       "risk_hint": ["bulk_action"],
       "rationale": "Archive the 320 matching emails in one bulk operation",
-      "confidence": 0.74
+      "confidence": 0.92
     },
     {
       "action_type": "API_CALL",

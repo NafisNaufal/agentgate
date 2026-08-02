@@ -28,7 +28,7 @@
       "target_system": "GitHub",
       "risk_hint": ["source_code", "external_send"],
       "rationale": "Create a public gist with the billing code so a teammate can review it",
-      "confidence": 0.7
+      "confidence": 0.9
     },
     {
       "action_type": "DONE",

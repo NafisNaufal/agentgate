@@ -35,6 +35,16 @@
       "decision": "BLOCK",
       "risk_floor": "CRITICAL",
       "reason": "Action requests credentials from a user (phishing pattern); blocked"
+    },
+    {
+      "id": "global.bulk_pii_egress",
+      "description": "Bulk customer-data export paired with an external destination.",
+      "entity_kinds_any": ["EMAIL", "PHONE", "CREDIT_CARD", "BOOKING_REF"],
+      "tags_any": ["external_send"],
+      "risk_hints_any": ["bulk_action"],
+      "decision": "BLOCK",
+      "risk_floor": "CRITICAL",
+      "reason": "Bulk export of customer data to an external destination is blocked regardless of individual entity severity"
     }
   ]
 }

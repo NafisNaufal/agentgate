@@ -249,6 +249,10 @@ tests/                unittest suite
 **Known risks in a custom agent loop, and how each is handled here:**
 - *An untrusted planner proposes something unsafe, or doesn't flag its own risk* —
   the planner only proposes; the DecisionEngine judges independently.
+- *The planner itself was unsure what the user meant* — a risky action with planner
+  confidence below 0.75 gets routed to `ASK_USER` instead of `NEED_APPROVAL`;
+  clarifying intent comes before judging a risk score computed from a guess. This
+  never softens a confirmed `BLOCK`/`SANITIZE` finding, only a `NEED_APPROVAL`.
 - *Malformed or off-vocabulary tool calls* — rejected by `action_space.py` before
   they ever reach evaluation.
 - *A run that never terminates* — bounded by `max_steps`, plus explicit `DONE`/

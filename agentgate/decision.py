@@ -22,6 +22,12 @@ _RANK = {
     Decision.BLOCK: 4,
 }
 
+# Below this, a NEED_APPROVAL is redirected to ASK_USER instead - the planner itself
+# wasn't confident, so intent should be clarified before a human reviews a risk score
+# computed from a guess.
+_LOW_CONFIDENCE_THRESHOLD = 0.75
+_CONFIDENCE_GATED_TYPES = {"API_CALL", "BROWSER_SUBMIT", "BROWSER_CLICK", "BROWSER_TYPE"}
+
 _NEXT_STEP = {
     Decision.ALLOW: "execute",
     Decision.SANITIZE: "execute_sanitized",
@@ -90,6 +96,19 @@ class DecisionEngine:
 
         # 5. Final decision = strongest of (policy decision, risk-band decision)
         decision = _stronger(policy.decision, _risk_decision(level))
+
+        # 5b. Low-confidence override: a NEED_APPROVAL routed off a guess the planner
+        # itself wasn't sure about should clarify intent first, not go straight to a
+        # human reviewer judging a risk score computed from that guess. Only downgrades
+        # NEED_APPROVAL - a confirmed BLOCK/SANITIZE finding (e.g. a live secret) is not
+        # softened by low confidence, that would weaken a real safety signal instead of
+        # resolving an ambiguous one.
+        if (
+            decision == Decision.NEED_APPROVAL
+            and req.confidence < _LOW_CONFIDENCE_THRESHOLD
+            and req.action_type in _CONFIDENCE_GATED_TYPES
+        ):
+            decision = Decision.ASK_USER
 
         # 6. Sanitized preview whenever we have something to redact
         sanitized_payload = None
