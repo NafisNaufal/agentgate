@@ -8,6 +8,8 @@ the point of independent test data is to surface exactly these gaps.
 
 Usage:
   python3 benchmarks/da_eval_runner.py [--architecture regex|hybrid|llm_first]
+  python3 benchmarks/da_eval_runner.py --case TC-P-005      # run just one case, full detail
+  python3 benchmarks/da_eval_runner.py --case TC-P --case DATA-0   # substring match, multiple allowed
 """
 
 from __future__ import annotations
@@ -28,14 +30,46 @@ from agentgate.schemas import ActionRequest  # noqa: E402
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--architecture", default="regex", choices=["regex", "hybrid", "llm_first"])
+    ap.add_argument(
+        "--case", action="append", default=None,
+        help="only run cases whose id contains this substring (repeatable); omit to run all",
+    )
     args = ap.parse_args()
 
     data = json.loads((ROOT / "scenarios" / "da_eval_set.json").read_text())
+    cases = data["cases"]
+    if args.case:
+        cases = [c for c in cases if any(needle in c["id"] for needle in args.case)]
+        if not cases:
+            print(f"No case id contains any of {args.case}. Available ids:")
+            print(", ".join(c["id"] for c in data["cases"]))
+            return 1
+
     engine = DecisionEngine(detectors=get_default_detectors(args.architecture))
+
+    # Single-case runs get the full picture (instruction + request + reasons) up front,
+    # not just a table row - that's the point of running one at a time.
+    if args.case and len(cases) == 1:
+        case = cases[0]
+        req = ActionRequest(**case["action_request"])
+        result = engine.evaluate(req)
+        ok = result.decision.value == case["expected_decision"]
+        print(f"{case['id']} - {case['title']}")
+        print(f"  user instruction: {case['user_instruction']}")
+        print(f"  action_request: {json.dumps(case['action_request'], indent=4)}")
+        print(f"  expected: {case['expected_decision']} ({case['expected_risk_level']})")
+        print(f"  actual:   {result.decision.value} ({result.risk_level.value}, score={result.risk_score})")
+        print(f"  {'MATCH' if ok else 'MISMATCH'}")
+        print(f"  reasons: {result.reasons}")
+        if result.triggered_policies:
+            print(f"  triggered_policies: {result.triggered_policies}")
+        if result.sanitized_payload:
+            print(f"  sanitized_payload: {result.sanitized_payload!r}")
+        return 0
 
     passed = 0
     rows = []
-    for case in data["cases"]:
+    for case in cases:
         req = ActionRequest(**case["action_request"])
         result = engine.evaluate(req)
         ok = result.decision.value == case["expected_decision"]
@@ -43,7 +77,8 @@ def main() -> int:
         rows.append((case["id"], case["title"], case["expected_decision"], result.decision.value,
                       case["expected_risk_level"], result.risk_level.value, ok, result.reasons))
 
-    print(f"DA test scenarios ({args.architecture} architecture): {passed}/{len(rows)} match expected decision\n")
+    label = f"{len(rows)} selected" if args.case else str(len(rows))
+    print(f"DA test scenarios ({args.architecture} architecture): {passed}/{label} match expected decision\n")
     header = f"{'ID':<10} {'Expected':<15} {'Actual':<15} {'Exp.Risk':<10} {'Act.Risk':<10} {'Match':<6} Title"
     print(header)
     print("-" * len(header))
