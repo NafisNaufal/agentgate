@@ -14,14 +14,17 @@ bad planner call doesn't take down the whole run.
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
 from .action_space import ActionSpaceError, is_terminal
 from .decision import DecisionEngine
+from .executors.base import safe_value
 from .planner.base import Planner, Proposal
 from .router import DecisionRouter, EnforcementOutcome
 from .schemas import ActionRequest, DecisionResponse
+from .tools import ToolRegistry
 
 
 @dataclass
@@ -35,13 +38,17 @@ class StepRecord:
     eval_ms: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
+        request = safe_value(self.request.to_dict()) if self.request else None
         return {
             "index": self.index,
-            "proposal": {"action_type": self.proposal.action_type, "arguments": self.proposal.arguments},
-            "request": self.request.to_dict() if self.request else None,
-            "decision": self.decision.to_dict() if self.decision else None,
-            "outcome": {"status": self.outcome.status, "message": self.outcome.message} if self.outcome else None,
-            "rejected_reason": self.rejected_reason,
+            "proposal": {
+                "action_type": self.proposal.action_type,
+                "arguments": safe_value(self.proposal.arguments),
+            },
+            "request": request,
+            "decision": safe_value(self.decision.to_dict()) if self.decision else None,
+            "outcome": self.outcome.to_dict() if self.outcome else None,
+            "rejected_reason": safe_value(self.rejected_reason),
             "eval_ms": self.eval_ms,
         }
 
@@ -55,9 +62,9 @@ class RunResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "task": self.task,
+            "task": safe_value(self.task),
             "status": self.status,
-            "final_message": self.final_message,
+            "final_message": safe_value(self.final_message),
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -69,11 +76,13 @@ class AgentLoop:
         router: DecisionRouter | None = None,
         max_steps: int = 12,
         decider: DecisionEngine | None = None,
+        tool_registry: ToolRegistry | None = None,
     ):
         self.planner = planner
         self.router = router or DecisionRouter()
         self.max_steps = max_steps
         self.decider = decider or DecisionEngine()
+        self.tool_registry = tool_registry or ToolRegistry()
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
         result = RunResult(task=task)
@@ -99,14 +108,33 @@ class AgentLoop:
                 )
                 break
 
-            req = proposal.to_action_request()
+            execution_arguments = deepcopy(proposal.arguments)
+            req = proposal.to_action_request(self.tool_registry, arguments=execution_arguments)
+            if getattr(self.router, "execution_enabled", False):
+                enrich = getattr(self.router, "enrich_request", None)
+                if callable(enrich):
+                    req = enrich(req, execution_arguments)
             t0 = time.perf_counter()
             decision = self.decider.evaluate(req)
             eval_ms = round((time.perf_counter() - t0) * 1000, 4)
-            outcome = self.router.route(req, decision)
+            if getattr(self.router, "execution_enabled", False):
+                outcome = self.router.route(req, decision, execution_arguments)
+            else:
+                outcome = self.router.route(req, decision)
             result.steps.append(StepRecord(i, proposal, req, decision, outcome, eval_ms=eval_ms))
 
             observation = {"last_outcome": outcome.status, "last_decision": decision.decision.value}
+            if outcome.execution_result:
+                observation["last_result"] = outcome.execution_result.to_observation()
+            if getattr(self.router, "execution_enabled", False) and outcome.status in {
+                "blocked",
+                "awaiting_approval",
+                "ask_user",
+                "execution_failed",
+            }:
+                result.status = outcome.status
+                result.final_message = outcome.message
+                break
         else:
             result.status = "max_steps_reached"
         return result

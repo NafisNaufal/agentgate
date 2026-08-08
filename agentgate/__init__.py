@@ -1,14 +1,14 @@
 """AgentGate - a pre-action guardrail for AI agent tool calls.
 
-Sprint 1: the full decision engine - detectors, policy engine, risk scoring,
-sanitizer - plus the custom function-calling loop and CLI demo. Real execution
-connectors (Gmail/GitHub/Playwright/...) are delegated to an Executor interface for
-the Data Engineer track once that interface is defined.
+The full decision engine, custom function-calling loop, and opt-in executor interface.
+GitHub, sandboxed filesystem, and Playwright executors are included; other providers
+can register independently.
 """
 
 from .schemas import ActionRequest, DecisionResponse, Decision, RiskLevel
 from .decision import DecisionEngine
 from .tools import ToolSpec, ToolRegistry
+from .executors import ExecutionResult, ExecutorRegistry
 
 __all__ = [
     "ActionRequest",
@@ -18,6 +18,8 @@ __all__ = [
     "DecisionEngine",
     "ToolSpec",
     "ToolRegistry",
+    "ExecutionResult",
+    "ExecutorRegistry",
 ]
 
 __version__ = "0.2.0"
