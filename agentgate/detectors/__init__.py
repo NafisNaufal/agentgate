@@ -4,14 +4,15 @@ Each detector is a small, independently testable unit. The decision engine runs 
 of them over an ActionRequest and aggregates their findings.
 
 DEFAULT_DETECTORS is the regex-only set - no network/model calls, always available.
-Two LLM-based architectures augment prompt-injection detection specifically (see
-benchmarks/detector_bakeoff.py for the measured accuracy/latency numbers that
-motivated the choice):
+Four architectures are supported:
 
+  "regex"     - regex-only, zero dependencies, always available.
   "hybrid"    - regex fast-path, LLM fallback only when regex finds nothing.
-                DEFAULT architecture: if Ollama isn't running, this fails safe and
-                behaves exactly like plain regex - nothing breaks without it.
-  "llm_first" - every action goes through the LLM directly, no regex fast-path.
+  "llm_first" - prompt-injection goes through the LLM directly; other detectors
+                remain regex-based.
+  "full_llm"  - ALL detectors use the local LLM (100% LLM, zero regex).
+                DEFAULT architecture: if Ollama isn't running, all detectors fail
+                safe to "no finding" rather than crashing.
 """
 
 import os
@@ -25,6 +26,13 @@ from .prompt_injection import PromptInjectionDetector
 from .intent import ActionIntentDetector
 from .injection_hybrid import HybridPromptInjectionDetector
 from .injection_llm_first import LLMFirstInjectionDetector
+from .llm_detectors import (
+    LLMPIIDetector,
+    LLMSecretDetector,
+    LLMSourceCodeDetector,
+    LLMPaymentPhishingDetector,
+    LLMActionIntentDetector,
+)
 
 # Zero-dependency detector set: regex-only, no network/model calls, always available.
 DEFAULT_DETECTORS: list[Detector] = [
@@ -36,25 +44,35 @@ DEFAULT_DETECTORS: list[Detector] = [
     ActionIntentDetector(),
 ]
 
-_ARCHITECTURES = {"regex", "hybrid", "llm_first"}
+_ARCHITECTURES = {"regex", "hybrid", "llm_first", "full_llm"}
 
 
 def get_default_detectors(architecture: str | None = None) -> list[Detector]:
-    """Build the detector list for a given injection-detection architecture.
+    """Build the detector list for a given architecture.
 
-    architecture: one of "regex", "hybrid" (default), "llm_first". None reads the
-    AGENTGATE_DETECTOR_ARCHITECTURE env var, defaulting to "hybrid" if unset.
-    "hybrid" and "llm_first" use a local Ollama server if one is running, but never
-    require it to be - both fail safe to a "no finding" result (same as regex would
-    give) if Ollama is unreachable.
+    architecture: one of "regex", "hybrid", "llm_first", "full_llm". None reads
+    the AGENTGATE_DETECTOR_ARCHITECTURE env var, defaulting to "full_llm" if unset.
+    LLM-based architectures use a local Ollama server if one is running, but never
+    require it to be - they fail safe to a "no finding" result if Ollama is
+    unreachable.
     """
     if architecture is None:
-        architecture = os.environ.get("AGENTGATE_DETECTOR_ARCHITECTURE", "hybrid")
+        architecture = os.environ.get("AGENTGATE_DETECTOR_ARCHITECTURE", "full_llm")
     if architecture not in _ARCHITECTURES:
         raise ValueError(f"Unknown architecture {architecture!r}; expected one of {_ARCHITECTURES}")
 
     if architecture == "regex":
         return list(DEFAULT_DETECTORS)
+
+    if architecture == "full_llm":
+        return [
+            LLMPIIDetector(),
+            LLMSecretDetector(),
+            LLMSourceCodeDetector(),
+            LLMPaymentPhishingDetector(),
+            LLMFirstInjectionDetector(),
+            LLMActionIntentDetector(),
+        ]
 
     injection_cls = HybridPromptInjectionDetector if architecture == "hybrid" else LLMFirstInjectionDetector
     return [
@@ -78,6 +96,11 @@ __all__ = [
     "ActionIntentDetector",
     "HybridPromptInjectionDetector",
     "LLMFirstInjectionDetector",
+    "LLMPIIDetector",
+    "LLMSecretDetector",
+    "LLMSourceCodeDetector",
+    "LLMPaymentPhishingDetector",
+    "LLMActionIntentDetector",
     "DEFAULT_DETECTORS",
     "get_default_detectors",
 ]

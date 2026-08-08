@@ -17,6 +17,11 @@ from agentgate.detectors import (
     ActionIntentDetector,
     HybridPromptInjectionDetector,
     LLMFirstInjectionDetector,
+    LLMPIIDetector,
+    LLMSecretDetector,
+    LLMSourceCodeDetector,
+    LLMPaymentPhishingDetector,
+    LLMActionIntentDetector,
     PaymentPhishingDetector,
     PIIDetector,
     PromptInjectionDetector,
@@ -139,9 +144,24 @@ class TestLLMDetectorArchitectures(unittest.TestCase):
         self.assertTrue(any(isinstance(d, HybridPromptInjectionDetector) for d in hybrid))
         self.assertTrue(any(isinstance(d, LLMFirstInjectionDetector) for d in llm_first))
 
-    def test_get_default_detectors_defaults_to_hybrid(self):
-        default = get_default_detectors(None)
-        self.assertTrue(any(isinstance(d, HybridPromptInjectionDetector) for d in default))
+    def test_get_default_detectors_defaults_to_full_llm(self):
+        default = get_default_detectors()
+        self.assertTrue(any(isinstance(d, LLMPIIDetector) for d in default))
+        self.assertTrue(any(isinstance(d, LLMSecretDetector) for d in default))
+        self.assertTrue(any(isinstance(d, LLMSourceCodeDetector) for d in default))
+        self.assertTrue(any(isinstance(d, LLMPaymentPhishingDetector) for d in default))
+        self.assertTrue(any(isinstance(d, LLMFirstInjectionDetector) for d in default))
+        self.assertTrue(any(isinstance(d, LLMActionIntentDetector) for d in default))
+        # Ensure no regex detectors are present in full_llm
+        self.assertFalse(any(type(d) is PIIDetector for d in default))
+        self.assertFalse(any(type(d) is SecretDetector for d in default))
+
+    def test_full_llm_architecture_returns_all_llm_detectors(self):
+        full_llm = get_default_detectors("full_llm")
+        self.assertEqual(len(full_llm), 6)
+        self.assertTrue(any(isinstance(d, LLMPIIDetector) for d in full_llm))
+        self.assertTrue(any(isinstance(d, LLMFirstInjectionDetector) for d in full_llm))
+        self.assertTrue(any(isinstance(d, LLMActionIntentDetector) for d in full_llm))
 
 
 class TestRisk(unittest.TestCase):
