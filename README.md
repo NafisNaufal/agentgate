@@ -13,8 +13,8 @@ task → planner proposes a tool call → AgentGate evaluates it → router enfo
 ```
 
 The full lifecycle works end to end: a detector suite, policy engine, risk scoring,
-and sanitizer are all implemented and wired into the CLI. Real execution connectors
-and persistent audit storage are still ahead — see [Status](#status).
+sanitizer, and opt-in GitHub/filesystem/browser executors are wired into the CLI.
+Persistent audit storage is still ahead — see [Status](#status).
 
 ## Setup from scratch
 
@@ -97,11 +97,83 @@ ollama pull qwen2.5:7b      # the model this project's bake-off recommends (see 
 - **`sanitizer.py`** — redacts detected sensitive content for `SANITIZE` decisions.
 - **`decision.py`** — ties detectors + policy + risk + sanitizer together into one
   `DecisionResponse`.
-- **`router.py`** — enforces the decision so a risky action is never silently
-  allowed to proceed.
+- **`router.py`** — enforces the decision and dispatches only explicitly enabled,
+  allowed actions.
 - **`loop.py`** — the function-calling loop, built from scratch.
-- **`tools.py`** — the shape of a tool registry, with illustrative entries; not yet
-  consulted by the loop or planner.
+- **`tools.py`** — tool metadata used to enrich planner proposals with trusted risk
+  defaults.
+- **`executors/`** — isolated GitHub, sandboxed filesystem, and optional Playwright
+  connectors behind a common result and dispatcher contract.
+
+## Real Executors
+
+Scenario replay remains guardrail-only by default. `ALLOW` reports
+`would_execute`, `SANITIZE` reports `sanitize_pending`, and no API, file, or browser
+operation runs unless `--execute` is present. Even in execution mode, `BLOCK`,
+`NEED_APPROVAL`, and `ASK_USER` never dispatch; there is no automatic approval path.
+
+```bash
+# Safe, reproducible dry-run (default)
+python -m agentgate run booking_message --architecture regex
+
+# Real actions against a configured local mock/sandbox environment
+python -m agentgate run booking_message --architecture regex --execute
+```
+
+Environment variables are read from the process environment; AgentGate does not
+automatically load `.env`. See `.env.example` for placeholders.
+
+### GitHub
+
+Set `GITHUB_TOKEN`; `GITHUB_API_URL` defaults to `https://api.github.com`. Prefer a
+fine-grained token limited to a dummy/test repository. Grant repository metadata and
+contents read permissions for `github_read_repo`/`github_read_file`, Issues write
+permission for issue/comment creation, and gist permission only when
+`github_create_gist` is required. Never use a production repository for initial
+executor testing.
+
+Implemented tools: `github_read_repo`, `github_read_file`, `github_create_issue`,
+`github_create_issue_comment`, and `github_create_gist`. Write tools receive trusted
+`external_send` defaults from the registry even if a planner omits them; gist
+creation also receives `source_code` and conservative no-rollback metadata.
+
+```bash
+export GITHUB_TOKEN=your_test_token
+export GITHUB_API_URL=https://api.github.com
+python -m agentgate tools
+```
+
+### Filesystem
+
+`FILE_READ` resolves only relative paths beneath `AGENTGATE_SANDBOX_ROOT` (default
+`./sandbox`). Canonical containment checks block parent traversal, absolute/drive
+paths, and symlinks that resolve outside the sandbox. Reads are UTF-8 text only and
+bounded by `AGENTGATE_FILE_MAX_BYTES` (default 1 MiB); no write/delete operation is
+implemented.
+
+```bash
+export AGENTGATE_SANDBOX_ROOT=./sandbox
+export AGENTGATE_FILE_MAX_BYTES=1048576
+```
+
+### Playwright
+
+Playwright is optional, so the zero-dependency guardrail and normal unit tests work
+without it. Install the browser extra and Chromium only when browser execution is
+needed:
+
+```bash
+python -m pip install -e ".[dev,browser]"
+python -m playwright install chromium
+```
+
+`AGENTGATE_BROWSER_ALLOWED_HOSTS` defaults to `localhost,127.0.0.1`; exact-host
+allowlisting is enforced for navigation and browser requests. Set
+`AGENTGATE_BROWSER_HEADLESS=true` for headless operation. Screenshots use generated
+filenames under `AGENTGATE_SCREENSHOT_DIR` (default `./artifacts/screenshots`) and
+planner-supplied output paths are ignored. Browser snapshots expose bounded visible
+text plus short IDs for interactive elements, never raw full HTML or internal
+locators.
 
 ## Detector architectures
 
@@ -235,7 +307,9 @@ agentgate/
   decision.py          DecisionEngine: detectors + policy + risk + sanitizer
   router.py            decision enforcement
   loop.py              function-calling loop
-  tools.py             tool registry shape (defined, not yet wired in)
+  tools.py             trusted tool registry metadata
+  tool_specs/          provider-specific tool catalogs
+  executors/           GitHub / filesystem / optional Playwright execution
   planner/              planner interface, replay planner, optional LLM planner
   cli.py               CLI demo (list / tools / run / eval)
 scenarios/            demo scenarios for the replay planner
@@ -276,18 +350,18 @@ approval-routing accuracy, sensitive-data detection recall.
 
 ## Status
 
-**Working now:** the full lifecycle (propose → validate → evaluate → enforce) runs
-end to end via the CLI. Detectors, policy engine, risk scoring, sanitizer, and
-decision engine are implemented and tested. Two LLM-backed detector architectures
-were built and benchmarked; `hybrid` is the default and fails safe to regex-only
-behavior if Ollama isn't available.
+**Working now:** the full lifecycle (propose → validate → evaluate → enforce →
+optional execution) runs end to end via the CLI. Detectors, policy engine, risk
+scoring, sanitizer, decision engine, trusted tool metadata, and opt-in GitHub,
+filesystem, and Playwright executors are implemented and tested. `hybrid` remains
+the default detector architecture and fails safe to regex-only behavior if Ollama
+isn't available.
 
 **In progress / planned next:**
-- Wiring the tool registry into the planner, with a full tool catalog and
-  per-tool safety defaults.
-- Real execution connectors (Gmail, GitHub, Stripe, browser automation) behind a
-  stable executor interface, and an approval queue for `NEED_APPROVAL` decisions —
-  both Data Engineering scope, built against the existing decision contract.
+- Additional provider executors and tool catalogs can register independently behind
+  the executor interface.
+- An approval queue for `NEED_APPROVAL` decisions; those actions currently remain
+  pending and never auto-execute.
 - Persistent audit storage.
 - A labeled evaluation harness with test data reviewed independently of whoever
   implements the detectors, to keep the accuracy numbers honest.

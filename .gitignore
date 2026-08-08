@@ -6,9 +6,18 @@ __pycache__/
 venv/
 build/
 dist/
+.env
+.env.*
+!.env.example
 *.jsonl
 audit_*.jsonl
 .DS_Store
+sandbox/
+artifacts/
+playwright-report/
+test-results/
+.browser-data/
+*.storage-state.json
 
 # Confidential company documents — kept local, never pushed
 docs/*.pdf
