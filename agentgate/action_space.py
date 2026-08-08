@@ -8,6 +8,8 @@ Validator").
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from .schemas import ACTION_TYPES, ActionRequest
 
 # Required argument keys per action verb (for proposals coming from the planner).
@@ -35,7 +37,12 @@ class ActionSpaceError(ValueError):
 
 def validate_proposal(action_type: str, arguments: dict | None = None) -> None:
     """Validate a raw planner proposal. Raises ActionSpaceError if invalid."""
-    arguments = arguments or {}
+    if not isinstance(action_type, str):
+        raise ActionSpaceError("Proposal action_type must be text")
+    if arguments is None:
+        arguments = {}
+    if not isinstance(arguments, Mapping):
+        raise ActionSpaceError("Proposal arguments must be an object")
     if action_type not in ACTION_TYPES:
         raise ActionSpaceError(
             f"Unknown action_type '{action_type}'. Allowed: {sorted(ACTION_TYPES)}"

@@ -12,6 +12,7 @@ GITHUB_TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "github_read_file",
         "GitHub",
+        content_fields=("path", "ref"),
         description="Read a UTF-8 file from a repository.",
     ),
     ToolSpec(
@@ -19,6 +20,7 @@ GITHUB_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "GitHub",
         rollback_available=False,
         default_risk_hints=("external_send",),
+        content_fields=("title", "body"),
         description="Create an externally visible repository issue.",
     ),
     ToolSpec(
@@ -26,6 +28,7 @@ GITHUB_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "GitHub",
         rollback_available=False,
         default_risk_hints=("external_send",),
+        content_fields=("body",),
         description="Post an externally visible issue comment.",
     ),
     ToolSpec(
@@ -33,6 +36,7 @@ GITHUB_TOOL_SPECS: tuple[ToolSpec, ...] = (
         "GitHub",
         rollback_available=False,
         default_risk_hints=("external_send", "source_code"),
+        content_fields=("description", "files"),
         description="Create an external gist containing one or more files.",
     ),
 )

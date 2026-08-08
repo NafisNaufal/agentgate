@@ -7,7 +7,7 @@ the DA's expected decision, that is reported as a mismatch, not silently reconci
 the point of independent test data is to surface exactly these gaps.
 
 Usage:
-  python3 benchmarks/da_eval_runner.py [--architecture regex|hybrid|llm_first]
+  python3 benchmarks/da_eval_runner.py
   python3 benchmarks/da_eval_runner.py --case TC-P-005      # run just one case, full detail
   python3 benchmarks/da_eval_runner.py --case TC-P --case DATA-0   # substring match, multiple allowed
 """
@@ -23,13 +23,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from agentgate.decision import DecisionEngine  # noqa: E402
-from agentgate.detectors import get_default_detectors  # noqa: E402
 from agentgate.schemas import ActionRequest  # noqa: E402
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--architecture", default="regex", choices=["regex", "hybrid", "llm_first"])
     ap.add_argument(
         "--case", action="append", default=None,
         help="only run cases whose id contains this substring (repeatable); omit to run all",
@@ -45,7 +43,7 @@ def main() -> int:
             print(", ".join(c["id"] for c in data["cases"]))
             return 1
 
-    engine = DecisionEngine(detectors=get_default_detectors(args.architecture))
+    engine = DecisionEngine()
 
     # Single-case runs get the full picture (instruction + request + reasons) up front,
     # not just a table row - that's the point of running one at a time.
@@ -78,7 +76,7 @@ def main() -> int:
                       case["expected_risk_level"], result.risk_level.value, ok, result.reasons))
 
     label = f"{len(rows)} selected" if args.case else str(len(rows))
-    print(f"DA test scenarios ({args.architecture} architecture): {passed}/{label} match expected decision\n")
+    print(f"DA test scenarios (full-LLM detector): {passed}/{label} match expected decision\n")
     header = f"{'ID':<10} {'Expected':<15} {'Actual':<15} {'Exp.Risk':<10} {'Act.Risk':<10} {'Match':<6} Title"
     print(header)
     print("-" * len(header))

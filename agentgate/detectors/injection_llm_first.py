@@ -1,4 +1,4 @@
-"""Architecture B: LLM-first, for prompt injection.
+"""Historical LLM-first prompt detector used only by the legacy benchmark.
 
 Every action with scannable text goes through the LLM - no regex pre-filter, no
 fast path. Simpler than the hybrid (Architecture A), but every action pays full

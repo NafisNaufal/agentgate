@@ -50,6 +50,7 @@ _SNAPSHOT_SCRIPT = f"""
     if (tag === 'textarea') return 'textbox';
     if (tag === 'input') {{
       const type = (el.type || 'text').toLowerCase();
+      if (type === 'image') return 'submit';
       if (['checkbox', 'radio', 'button', 'submit'].includes(type)) return type;
       return 'textbox';
     }}
@@ -124,7 +125,7 @@ class PlaywrightExecutor:
         self,
         *,
         headless: bool | None = None,
-        allowed_hosts: str | Iterable[str] | None = None,
+        allowed_origins: str | Iterable[str] | None = None,
         screenshot_dir: str | Path | None = None,
         timeout_ms: int = 15_000,
         page: Any | None = None,
@@ -132,14 +133,19 @@ class PlaywrightExecutor:
         allow_injected_page_for_tests: bool = False,
     ) -> None:
         self.headless = _env_bool("AGENTGATE_BROWSER_HEADLESS", True) if headless is None else headless
-        configured_hosts = allowed_hosts
-        if configured_hosts is None:
-            configured_hosts = os.environ.get(
-                "AGENTGATE_BROWSER_ALLOWED_HOSTS", "localhost,127.0.0.1"
+        configured_origins = allowed_origins
+        if configured_origins is None:
+            configured_origins = os.environ.get(
+                "AGENTGATE_BROWSER_ALLOWED_ORIGINS",
+                "http://localhost:3000,http://127.0.0.1:3000",
             )
-        if isinstance(configured_hosts, str):
-            configured_hosts = configured_hosts.split(",")
-        self.allowed_hosts = {host.strip().lower().rstrip(".") for host in configured_hosts if host.strip()}
+        if isinstance(configured_origins, str):
+            configured_origins = configured_origins.split(",")
+        self.allowed_origins = {
+            _configured_origin(origin.strip())
+            for origin in configured_origins
+            if origin.strip()
+        }
         configured_dir = screenshot_dir or os.environ.get(
             "AGENTGATE_SCREENSHOT_DIR", "./artifacts/screenshots"
         )
@@ -184,7 +190,9 @@ class PlaywrightExecutor:
             content_context="\n".join(part for part in (request.content_context, context) if part),
             risk_hint=risk_hints,
             rollback_available=(
-                False if "destructive_action" in risk_hints else request.rollback_available
+                False
+                if {"destructive_action", "form_submit"} & set(risk_hints)
+                else request.rollback_available
             ),
         )
 
@@ -252,15 +260,21 @@ class PlaywrightExecutor:
                 str(record.get(key, ""))
                 for key in ("role", "type", "label", "text", "href", "form_action", "method")
             )
+            risk_hints = _risk_hints(context)
+            role = _safe_text(record.get("role", ""), 40)
+            if type_name in {"submit", "image"} or (
+                role == "button" and bool(record.get("form_action"))
+            ):
+                risk_hints = list(dict.fromkeys([*risk_hints, "external_send", "form_submit"]))
             metadata = {
-                "role": _safe_text(record.get("role", ""), 40),
+                "role": role,
                 "type": type_name,
                 "label": _safe_text(record.get("label", ""), 160),
                 "text": _safe_text(record.get("text", ""), 160),
                 "href": _safe_text(record.get("href", ""), 500),
                 "form_action": _safe_text(record.get("form_action", ""), 500),
                 "method": _safe_text(record.get("method", ""), 20),
-                "risk_hint": _risk_hints(context),
+                "risk_hint": risk_hints,
                 "page_url": str(page.url),
                 "fingerprint": {
                     "role": str(record.get("role", "")),
@@ -297,6 +311,12 @@ class PlaywrightExecutor:
 
     def _click(self, page: Any, arguments: Mapping[str, Any]) -> ExecutionResult:
         locator = self._mapped(page, arguments)
+        metadata = self._element_metadata.get(str(arguments.get("element_id", "")), {})
+        if "form_submit" in metadata.get("risk_hint", []):
+            raise _BrowserFailure(
+                "submit_requires_guarded_action",
+                "Submit-capable controls must use BROWSER_SUBMIT",
+            )
         locator.click(timeout=self.timeout_ms)
         self._validate_current_page(page)
         self._clear_elements()
@@ -406,7 +426,7 @@ class PlaywrightExecutor:
                 accept_downloads=False,
             )
             self._context.route("**/*", self._route_request)
-            self._context.add_init_script(script=_network_guard_script(self.allowed_hosts))
+            self._context.add_init_script(script=_network_guard_script(self.allowed_origins))
             self._page = self._context.new_page()
             self._page.set_default_timeout(self.timeout_ms)
             return self._page
@@ -419,8 +439,15 @@ class PlaywrightExecutor:
             raise
         except Exception as exc:
             message = str(exc).lower()
-            status = "browser_not_installed" if "executable doesn't exist" in message else "browser_start_failed"
-            raise _BrowserFailure(status, f"Unable to start Playwright Chromium: {exc}") from exc
+            if "executable doesn't exist" in message:
+                raise _BrowserFailure(
+                    "browser_not_installed",
+                    "Playwright Chromium is not installed; run: python -m playwright install chromium",
+                ) from exc
+            raise _BrowserFailure(
+                "browser_start_failed",
+                f"Unable to start Playwright Chromium: {type(exc).__name__}",
+            ) from exc
 
     def _route_request(self, route: Any, request: Any) -> None:
         parsed = urlsplit(str(request.url))
@@ -449,11 +476,11 @@ class PlaywrightExecutor:
             raise _BrowserFailure("url_not_allowed", "Only allowlisted HTTP(S) URLs may be opened")
         if parsed.username or parsed.password:
             raise _BrowserFailure("url_not_allowed", "Credentials in browser URLs are not allowed")
-        hostname = parsed.hostname.lower().rstrip(".")
-        if hostname not in self.allowed_hosts:
+        origin = _normalize_origin(url)
+        if origin not in self.allowed_origins:
             raise _BrowserFailure(
                 "url_not_allowed",
-                f"Browser host {hostname!r} is not in AGENTGATE_BROWSER_ALLOWED_HOSTS",
+                f"Browser origin {origin!r} is not in AGENTGATE_BROWSER_ALLOWED_ORIGINS",
             )
 
     def _exception_failure(self, exc: Exception) -> ExecutionResult:
@@ -464,7 +491,10 @@ class PlaywrightExecutor:
         elif "closed" in lowered or "target page" in lowered:
             status = "browser_closed"
         elif "executable doesn't exist" in lowered:
-            status = "browser_not_installed"
+            return self._failure(
+                "browser_not_installed",
+                "Playwright Chromium is not installed; run: python -m playwright install chromium",
+            )
         else:
             status = "browser_error"
         return self._failure(status, f"Browser action failed: {message}")
@@ -522,16 +552,35 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _network_guard_script(allowed_hosts: set[str]) -> str:
-    hosts = json.dumps(sorted(allowed_hosts))
+def _configured_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.path not in {"", "/"}:
+        raise ValueError("browser origins must not contain a path")
+    return _normalize_origin(value)
+
+
+def _normalize_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("browser origins must be full HTTP(S) URLs")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("browser origins must not contain credentials, query, or fragment")
+    hostname = parsed.hostname.lower().rstrip(".")
+    default_port = 80 if parsed.scheme == "http" else 443
+    suffix = f":{parsed.port}" if parsed.port and parsed.port != default_port else ""
+    return f"{parsed.scheme}://{hostname}{suffix}"
+
+
+def _network_guard_script(allowed_origins: set[str]) -> str:
+    origins = json.dumps(sorted(allowed_origins))
     return f"""
 (() => {{
-  const allowedHosts = new Set({hosts});
+  const allowedOrigins = new Set({origins});
   const allowed = (value) => {{
     try {{
       const url = new URL(value, window.location.href);
       return ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol) &&
-        allowedHosts.has(url.hostname.toLowerCase().replace(/\\.$/, ''));
+        allowedOrigins.has(url.origin.replace('ws:', 'http:').replace('wss:', 'https:'));
     }} catch (_) {{ return false; }}
   }};
   const NativeWebSocket = window.WebSocket;

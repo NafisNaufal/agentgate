@@ -5,14 +5,7 @@ from __future__ import annotations
 from .tool_specs import GITHUB_TOOL_SPECS, ToolSpec
 
 
-_EXAMPLE_TOOLS: tuple[ToolSpec, ...] = (
-    ToolSpec("gmail_send", "Gmail", rollback_available=False,
-             default_risk_hints=("external_send",), description="Send an email (external, irreversible)."),
-    ToolSpec("gmail_search", "Gmail", description="Search the inbox (read-only)."),
-)
-
-
-_DEFAULT_TOOLS = _EXAMPLE_TOOLS + GITHUB_TOOL_SPECS
+_DEFAULT_TOOLS = GITHUB_TOOL_SPECS
 
 
 class ToolRegistry:

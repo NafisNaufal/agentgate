@@ -30,6 +30,7 @@ You need:
 
 - Python 3.10 or newer
 - Git
+- Ollama with the configured detector model
 - A GitHub token only if you intend to execute GitHub actions
 - Playwright and Chromium only if you intend to execute browser actions
 
@@ -61,7 +62,8 @@ python3 -m pip install -e ".[dev]"
 ```
 
 The core guardrail and GitHub/filesystem executors use only the Python standard
-library. Install the optional browser dependencies only when needed:
+library, but full-LLM detection requires the external Ollama runtime. Install the
+optional browser dependencies only when needed:
 
 ```bash
 python3 -m pip install -e ".[dev,browser]"
@@ -83,29 +85,47 @@ load `.env` files. `.env.example` contains placeholders for all executor setting
 ### macOS and Linux
 
 ```bash
+export OLLAMA_HOST=http://localhost:11434
+export AGENTGATE_LLM_DETECTOR_MODEL=qwen2.5:7b
+export AGENTGATE_LLM_DETECTOR_TIMEOUT=30
 export GITHUB_TOKEN=
 export GITHUB_API_URL=https://api.github.com
 export AGENTGATE_SANDBOX_ROOT=./sandbox
 export AGENTGATE_FILE_MAX_BYTES=1048576
 export AGENTGATE_BROWSER_HEADLESS=true
-export AGENTGATE_BROWSER_ALLOWED_HOSTS=localhost,127.0.0.1
+export AGENTGATE_BROWSER_ALLOWED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 export AGENTGATE_SCREENSHOT_DIR=./artifacts/screenshots
 ```
 
 ### Windows PowerShell
 
 ```powershell
+$env:OLLAMA_HOST = "http://localhost:11434"
+$env:AGENTGATE_LLM_DETECTOR_MODEL = "qwen2.5:7b"
+$env:AGENTGATE_LLM_DETECTOR_TIMEOUT = "30"
 $env:GITHUB_TOKEN = ""
 $env:GITHUB_API_URL = "https://api.github.com"
 $env:AGENTGATE_SANDBOX_ROOT = ".\sandbox"
 $env:AGENTGATE_FILE_MAX_BYTES = "1048576"
 $env:AGENTGATE_BROWSER_HEADLESS = "true"
-$env:AGENTGATE_BROWSER_ALLOWED_HOSTS = "localhost,127.0.0.1"
+$env:AGENTGATE_BROWSER_ALLOWED_ORIGINS = "http://localhost:8000,http://127.0.0.1:8000"
 $env:AGENTGATE_SCREENSHOT_DIR = ".\artifacts\screenshots"
 ```
 
 Leave `GITHUB_TOKEN` empty until the GitHub tutorial. Never place a real token in a
 scenario, source file, CLI argument, or planner prompt.
+
+Start Ollama in one terminal:
+
+```bash
+ollama serve
+```
+
+Install the detector model from another terminal:
+
+```bash
+ollama pull qwen2.5:7b
+```
 
 ## 4. Verify the Installation
 
@@ -127,11 +147,11 @@ Run the test suite:
 python3 -m unittest discover -s tests -v
 ```
 
-Run the built-in scenarios in deterministic regex mode:
+Run the built-in scenarios through the full-LLM detector:
 
 ```bash
-python3 -m agentgate run sensitive_code --architecture regex
-python3 -m agentgate run booking_message --architecture regex
+python3 -m agentgate run sensitive_code
+python3 -m agentgate run booking_message
 ```
 
 These commands are dry runs. They do not read local files, contact GitHub, or launch
@@ -223,7 +243,7 @@ Create `scenarios/tutorial_file_read.json`:
 ### Step 4: Dry-run the scenario
 
 ```bash
-python3 -m agentgate run tutorial_file_read --architecture regex
+python3 -m agentgate run tutorial_file_read
 ```
 
 The expected outcome is `would_execute`. The file is not read yet.
@@ -231,7 +251,7 @@ The expected outcome is `would_execute`. The file is not read yet.
 ### Step 5: Execute the allowed read
 
 ```bash
-python3 -m agentgate run tutorial_file_read --architecture regex --execute
+python3 -m agentgate run tutorial_file_read --execute
 ```
 
 The expected outcome is `executed`, with a bounded and sanitized result.
@@ -322,13 +342,13 @@ Create `scenarios/tutorial_github_read.json`, replacing `YOUR_TEST_OWNER` and
 Dry-run first:
 
 ```bash
-python3 -m agentgate run tutorial_github_read --architecture regex
+python3 -m agentgate run tutorial_github_read
 ```
 
 Execute only after checking the decision:
 
 ```bash
-python3 -m agentgate run tutorial_github_read --architecture regex --execute
+python3 -m agentgate run tutorial_github_read --execute
 ```
 
 ### Step 4: Create a test issue
@@ -364,8 +384,8 @@ Create `scenarios/tutorial_github_issue.json`:
 Always inspect a dry run before enabling the write:
 
 ```bash
-python3 -m agentgate run tutorial_github_issue --architecture regex
-python3 -m agentgate run tutorial_github_issue --architecture regex --execute
+python3 -m agentgate run tutorial_github_issue
+python3 -m agentgate run tutorial_github_issue --execute
 ```
 
 The write runs only if the final decision is `ALLOW`. If policy returns
@@ -427,7 +447,7 @@ python3 -m http.server 8000 --directory sandbox/browser-demo
 
 ```bash
 export AGENTGATE_BROWSER_HEADLESS=true
-export AGENTGATE_BROWSER_ALLOWED_HOSTS=localhost,127.0.0.1
+export AGENTGATE_BROWSER_ALLOWED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 export AGENTGATE_SCREENSHOT_DIR=./artifacts/screenshots
 ```
 
@@ -502,8 +522,8 @@ IDs returned by the latest snapshot rather than guessing them.
 ### Step 6: Dry-run and execute
 
 ```bash
-python3 -m agentgate run tutorial_browser --architecture regex
-python3 -m agentgate run tutorial_browser --architecture regex --execute
+python3 -m agentgate run tutorial_browser
+python3 -m agentgate run tutorial_browser --execute
 ```
 
 The `BROWSER_TYPE` step should receive `SANITIZE`. The executor types redacted text,
@@ -530,13 +550,13 @@ metadata. Raw full HTML and internal selectors are not returned to the planner.
 Add `--json` to receive structured, audit-ready output:
 
 ```bash
-python3 -m agentgate run tutorial_file_read --architecture regex --json
+python3 -m agentgate run tutorial_file_read --json
 ```
 
 Execution mode also supports JSON output:
 
 ```bash
-python3 -m agentgate run tutorial_file_read --architecture regex --execute --json
+python3 -m agentgate run tutorial_file_read --execute --json
 ```
 
 Executor output is bounded and sanitized before serialization. The output contains
@@ -551,7 +571,6 @@ the `DecisionEngine` always evaluates them first.
 
 ```python
 from agentgate.decision import DecisionEngine
-from agentgate.detectors import get_default_detectors
 from agentgate.executors import build_default_executor_registry
 from agentgate.loop import AgentLoop
 from agentgate.planner import ReplayPlanner
@@ -568,7 +587,7 @@ steps = [
 
 executors = build_default_executor_registry()
 router = DecisionRouter(executors, execute=True)
-decider = DecisionEngine(detectors=get_default_detectors("regex"))
+decider = DecisionEngine()
 loop = AgentLoop(ReplayPlanner(steps), router, decider=decider)
 
 try:
@@ -606,6 +625,22 @@ python3 -m pip install -e ".[browser]"
 python3 -m playwright install chromium
 ```
 
+### LLM detector is unavailable
+
+Start Ollama in one terminal:
+
+```bash
+ollama serve
+```
+
+Then install the configured model from another terminal:
+
+```bash
+ollama pull "${AGENTGATE_LLM_DETECTOR_MODEL:-qwen2.5:7b}"
+```
+
+AgentGate fails closed to `NEED_APPROVAL`; it does not fall back to a legacy detector.
+
 ### `Executable doesn't exist` or browser not installed
 
 Install Chromium again:
@@ -614,13 +649,13 @@ Install Chromium again:
 python3 -m playwright install chromium
 ```
 
-### Browser host is not allowed
+### Browser origin is not allowed
 
-Check the exact hostname in the URL and update the allowlist only for environments
+Check the exact scheme, hostname, and port in the URL and update the allowlist only for environments
 you control:
 
 ```bash
-export AGENTGATE_BROWSER_ALLOWED_HOSTS=localhost,127.0.0.1
+export AGENTGATE_BROWSER_ALLOWED_ORIGINS=http://localhost:8000,http://127.0.0.1:8000
 ```
 
 Do not add broad production domains merely to bypass a policy decision.
@@ -655,6 +690,6 @@ Before using `--execute`:
 - Keep browser automation on localhost or explicit test hosts.
 - Review `SANITIZE` output before external communication.
 - Confirm `NEED_APPROVAL`, `ASK_USER`, and `BLOCK` actions remain unexecuted.
-- Never place credentials in scenarios, prompts, source code, or CLI arguments.
+- Never place real credentials in scenarios, prompts, source code, or CLI arguments.
 
 This implementation does not provide Gmail, Google Calendar, or Telegram executors.

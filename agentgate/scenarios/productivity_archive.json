@@ -16,10 +16,7 @@
     },
     {
       "action_type": "API_CALL",
-      "arguments": {
-        "tool_name": "gmail_archive",
-        "payload": "archive query=older_than:30d affected_items=320"
-      },
+      "arguments": {"tool_name": "gmail_archive", "payload": "archive query=older_than:30d affected_items=320"},
       "domain": "productivity",
       "target_system": "Gmail",
       "risk_hint": ["bulk_action"],
@@ -28,10 +25,7 @@
     },
     {
       "action_type": "API_CALL",
-      "arguments": {
-        "tool_name": "calendar_create_event",
-        "payload": "Inbox cleanup review on Friday 16:00"
-      },
+      "arguments": {"tool_name": "calendar_create_event", "payload": "Inbox cleanup review on Friday 16:00"},
       "domain": "productivity",
       "target_system": "Google Calendar",
       "rationale": "Create a low-risk reminder event",

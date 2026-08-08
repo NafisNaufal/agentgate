@@ -138,13 +138,8 @@ class GitHubExecutor:
 
     def _github_create_issue_comment(self, arguments: Mapping[str, Any]) -> ExecutionResult:
         owner, repo = self._repo(arguments)
-        try:
-            if isinstance(arguments.get("issue_number"), bool):
-                raise TypeError
-            issue_number = int(arguments.get("issue_number"))
-        except (TypeError, ValueError) as exc:
-            raise _ArgumentsError("issue_number must be a positive integer") from exc
-        if issue_number <= 0:
+        issue_number = arguments.get("issue_number")
+        if type(issue_number) is not int or issue_number <= 0:
             raise _ArgumentsError("issue_number must be a positive integer")
         payload = {"body": _required_text(arguments, "body")}
         data = self._request(

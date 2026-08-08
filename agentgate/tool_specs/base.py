@@ -13,4 +13,5 @@ class ToolSpec:
     channel: str = "api"
     rollback_available: bool = True
     default_risk_hints: tuple[str, ...] = ()
+    content_fields: tuple[str, ...] = ()
     description: str = ""

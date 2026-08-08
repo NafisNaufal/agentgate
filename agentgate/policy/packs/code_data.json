@@ -5,7 +5,7 @@
     {
       "id": "code.secret_egress",
       "description": "Secret/credential material leaving via an outbound action.",
-      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT"],
+      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT", "GENERIC_SECRET"],
       "action_types": ["API_CALL", "BROWSER_SUBMIT", "BROWSER_TYPE"],
       "decision": "BLOCK",
       "risk_floor": "CRITICAL",
@@ -14,7 +14,7 @@
     {
       "id": "code.secret_present",
       "description": "Secret material present in the payload at all.",
-      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT"],
+      "entity_kinds_any": ["AWS_ACCESS_KEY", "GITHUB_TOKEN", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SLACK_TOKEN", "GOOGLE_API_KEY", "JWT", "PRIVATE_KEY", "CREDENTIAL_ASSIGNMENT", "GENERIC_SECRET"],
       "decision": "SANITIZE",
       "risk_floor": "HIGH",
       "reason": "Detected secret material should be redacted before the action continues"

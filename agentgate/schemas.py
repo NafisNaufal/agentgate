@@ -60,6 +60,7 @@ RISK_HINTS = {
     "source_code",
     "bulk_action",
     "destructive_action",
+    "form_submit",
 }
 
 
@@ -87,8 +88,32 @@ class ActionRequest:
     raw_payload: str = ""
 
     def __post_init__(self) -> None:
+        text_fields = (
+            "action_type",
+            "domain",
+            "target_system",
+            "tool_name",
+            "target",
+            "payload_summary",
+            "content_context",
+            "raw_payload",
+        )
+        if any(not isinstance(getattr(self, name), str) for name in text_fields):
+            raise ValueError("ActionRequest text fields must be strings")
+        if not isinstance(self.rollback_available, bool):
+            raise ValueError("rollback_available must be true or false")
+        if (
+            isinstance(self.confidence, bool)
+            or not isinstance(self.confidence, (int, float))
+            or not 0 <= float(self.confidence) <= 1
+        ):
+            raise ValueError("confidence must be a number between 0 and 1")
         if isinstance(self.risk_hint, str):
             self.risk_hint = [self.risk_hint] if self.risk_hint else []
+        if not isinstance(self.risk_hint, list) or any(
+            not isinstance(hint, str) for hint in self.risk_hint
+        ):
+            raise ValueError("risk_hint must be a list of strings")
         # The text detectors scan: prefer raw payload, fall back to the summary.
         if not self.raw_payload:
             self.raw_payload = self.payload_summary

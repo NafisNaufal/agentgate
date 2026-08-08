@@ -43,6 +43,25 @@ _DECISION_RANK = {
     Decision.BLOCK: 4,
 }
 _RISK_RANK = {RiskLevel.LOW: 0, RiskLevel.MEDIUM: 1, RiskLevel.HIGH: 2, RiskLevel.CRITICAL: 3}
+_LIST_CONDITIONS = {
+    "domains",
+    "action_types",
+    "risk_hints_any",
+    "tags_any",
+    "entity_kinds_any",
+    "target_systems_any",
+}
+_RULE_KEYS = {
+    "id",
+    "description",
+    "reason",
+    "decision",
+    "risk_floor",
+    "min_confidence",
+    "requires_no_rollback",
+    "_pack",
+    *_LIST_CONDITIONS,
+}
 
 
 @dataclass
@@ -73,6 +92,9 @@ class PolicyContext:
 class PolicyEngine:
     def __init__(self, rules: list[dict[str, Any]] | None = None):
         self.rules: list[dict[str, Any]] = rules if rules is not None else load_packs()
+        if rules is None and not self.rules:
+            raise RuntimeError("AgentGate policy packs are missing or empty")
+        _validate_rules(self.rules)
 
     def evaluate(self, req: ActionRequest, ctx: PolicyContext) -> PolicyResult:
         result = PolicyResult()
@@ -121,3 +143,46 @@ def load_packs(packs_dir: Path | None = None) -> list[dict[str, Any]]:
             rule.setdefault("_pack", data.get("name", path.stem))
             rules.append(rule)
     return rules
+
+
+def _validate_rules(rules: list[dict[str, Any]]) -> None:
+    seen: set[str] = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("Policy rules must be objects")
+        unknown = set(rule) - _RULE_KEYS
+        if unknown:
+            raise ValueError(f"Policy rule contains unknown keys: {sorted(unknown)}")
+        rule_id = rule.get("id")
+        if not isinstance(rule_id, str) or not rule_id:
+            raise ValueError("Policy rules require a non-empty id")
+        if rule_id in seen:
+            raise ValueError(f"Duplicate policy rule id: {rule_id}")
+        seen.add(rule_id)
+        if "decision" not in rule or "risk_floor" not in rule:
+            raise ValueError(f"Policy rule {rule_id!r} requires decision and risk_floor")
+        Decision(rule["decision"])
+        RiskLevel(rule["risk_floor"])
+        for key in _LIST_CONDITIONS:
+            value = rule.get(key)
+            if value is not None and (
+                not isinstance(value, list)
+                or any(not isinstance(item, str) for item in value)
+            ):
+                raise ValueError(f"Policy rule {rule_id!r} field {key!r} must be a string list")
+        confidence = rule.get("min_confidence")
+        if confidence is not None and (
+            isinstance(confidence, bool)
+            or not isinstance(confidence, (int, float))
+            or not 0 <= confidence <= 1
+        ):
+            raise ValueError(f"Policy rule {rule_id!r} has invalid min_confidence")
+        if "requires_no_rollback" in rule and not isinstance(
+            rule["requires_no_rollback"], bool
+        ):
+            raise ValueError(
+                f"Policy rule {rule_id!r} field 'requires_no_rollback' must be boolean"
+            )
+        for key in ("description", "reason", "_pack"):
+            if key in rule and not isinstance(rule[key], str):
+                raise ValueError(f"Policy rule {rule_id!r} field {key!r} must be text")

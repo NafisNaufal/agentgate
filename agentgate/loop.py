@@ -13,6 +13,7 @@ bad planner call doesn't take down the whole run.
 
 from __future__ import annotations
 
+import json
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -20,10 +21,10 @@ from typing import Any
 
 from .action_space import ActionSpaceError, is_terminal
 from .decision import DecisionEngine
-from .executors.base import safe_value
+from .executors.base import ExecutionResult, safe_value
 from .planner.base import Planner, Proposal
 from .router import DecisionRouter, EnforcementOutcome
-from .schemas import ActionRequest, DecisionResponse
+from .schemas import ActionRequest, Decision, DecisionResponse, RiskLevel
 from .tools import ToolRegistry
 
 
@@ -39,11 +40,17 @@ class StepRecord:
 
     def to_dict(self) -> dict[str, Any]:
         request = safe_value(self.request.to_dict()) if self.request else None
+        proposal_arguments = safe_value(self.proposal.arguments)
+        if self.decision and self.decision.sensitive_entities:
+            proposal_arguments = _opaque_arguments(self.proposal.arguments)
+            if request:
+                for key in ("target", "payload_summary", "content_context", "raw_payload"):
+                    request[key] = "[REDACTED_SENSITIVE_CONTENT]"
         return {
             "index": self.index,
             "proposal": {
                 "action_type": self.proposal.action_type,
-                "arguments": safe_value(self.proposal.arguments),
+                "arguments": proposal_arguments,
             },
             "request": request,
             "decision": safe_value(self.decision.to_dict()) if self.decision else None,
@@ -61,10 +68,22 @@ class RunResult:
     final_message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        has_sensitive_content = any(
+            step.decision and step.decision.sensitive_entities
+            for step in self.steps
+        )
         return {
-            "task": safe_value(self.task),
+            "task": (
+                "[REDACTED_SENSITIVE_CONTENT]"
+                if has_sensitive_content
+                else safe_value(self.task)
+            ),
             "status": self.status,
-            "final_message": safe_value(self.final_message),
+            "final_message": (
+                "[REDACTED_SENSITIVE_CONTENT]"
+                if has_sensitive_content
+                else safe_value(self.final_message)
+            ),
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -85,7 +104,16 @@ class AgentLoop:
         self.tool_registry = tool_registry or ToolRegistry()
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
-        result = RunResult(task=task)
+        task_screen = self.decider.evaluate(
+            ActionRequest(action_type="TASK_CONTEXT", payload_summary=task)
+        )
+        display_task = (
+            task
+            if task_screen.decision == Decision.ALLOW
+            and not task_screen.sensitive_entities
+            else "Task text was withheld by AgentGate"
+        )
+        result = RunResult(task=display_task)
         for i in range(self.max_steps):
             try:
                 proposal = self.planner.propose(task, observation)
@@ -102,14 +130,79 @@ class AgentLoop:
                 continue
 
             if is_terminal(proposal.action_type):
-                result.status = "completed" if proposal.action_type == "DONE" else "failed"
-                result.final_message = proposal.arguments.get(
-                    "result_summary", proposal.arguments.get("reason", proposal.rationale)
+                terminal_message = proposal.arguments.get(
+                    "result_summary",
+                    proposal.arguments.get("reason", proposal.rationale),
+                )
+                terminal_decision = self.decider.evaluate(
+                    ActionRequest(
+                        action_type=proposal.action_type,
+                        payload_summary=str(terminal_message),
+                    )
+                )
+                if proposal.action_type == "FAIL":
+                    result.status = "failed"
+                elif not getattr(self.router, "execution_enabled", False):
+                    intervened = any(
+                        step.decision
+                        and step.decision.decision
+                        in {
+                            Decision.BLOCK,
+                            Decision.SANITIZE,
+                            Decision.NEED_APPROVAL,
+                            Decision.ASK_USER,
+                        }
+                        for step in result.steps
+                    )
+                    result.status = (
+                        "dry_run_intervention" if intervened else "dry_run_complete"
+                    )
+                else:
+                    result.status = "completed"
+                result.final_message = (
+                    "Terminal planner output was withheld by AgentGate"
+                    if terminal_decision.decision != Decision.ALLOW
+                    or terminal_decision.sensitive_entities
+                    else str(terminal_message)
                 )
                 break
 
-            execution_arguments = deepcopy(proposal.arguments)
-            req = proposal.to_action_request(self.tool_registry, arguments=execution_arguments)
+            if proposal.action_type in {"ASK_USER", "NEED_APPROVAL"}:
+                control_decision = _control_decision(proposal)
+                outcome = self.router.route(
+                    proposal.to_action_request(self.tool_registry),
+                    control_decision,
+                )
+                result.steps.append(
+                    StepRecord(i, proposal, decision=control_decision, outcome=outcome)
+                )
+                result.status = outcome.status
+                result.final_message = outcome.message
+                break
+
+            if (
+                getattr(self.router, "execution_enabled", False)
+                and proposal.action_type == "API_CALL"
+                and not self.tool_registry.is_registered(
+                    str(proposal.arguments.get("tool_name", ""))
+                )
+            ):
+                reason = "Real API execution requires registered trusted tool metadata"
+                result.steps.append(StepRecord(i, proposal, rejected_reason=reason))
+                result.status = "failed"
+                result.final_message = reason
+                break
+
+            try:
+                execution_arguments = deepcopy(proposal.arguments)
+                req = proposal.to_action_request(
+                    self.tool_registry,
+                    arguments=execution_arguments,
+                )
+            except (TypeError, ValueError) as exc:
+                reason = f"Invalid action request: {exc}"
+                result.steps.append(StepRecord(i, proposal, rejected_reason=reason))
+                continue
             if getattr(self.router, "execution_enabled", False):
                 enrich = getattr(self.router, "enrich_request", None)
                 if callable(enrich):
@@ -125,7 +218,11 @@ class AgentLoop:
 
             observation = {"last_outcome": outcome.status, "last_decision": decision.decision.value}
             if outcome.execution_result:
-                observation["last_result"] = outcome.execution_result.to_observation()
+                observation["last_result"] = self._screen_execution_observation(
+                    req,
+                    outcome.execution_result,
+                )
+                outcome.message = outcome.execution_result.summary
             if getattr(self.router, "execution_enabled", False) and outcome.status in {
                 "blocked",
                 "awaiting_approval",
@@ -138,3 +235,81 @@ class AgentLoop:
         else:
             result.status = "max_steps_reached"
         return result
+
+    def _screen_execution_observation(
+        self,
+        request: ActionRequest,
+        execution_result: ExecutionResult,
+    ) -> dict[str, Any]:
+        safe_result = execution_result.to_observation()
+        serialized = json.dumps(safe_result, ensure_ascii=True)
+        observation_request = ActionRequest(
+            action_type=request.action_type,
+            domain=request.domain,
+            target_system=request.target_system,
+            tool_name=request.tool_name,
+            target=request.target,
+            payload_summary=serialized[:120],
+            raw_payload=serialized,
+            content_context="Content returned by an executor before planner observation",
+            risk_hint=list(request.risk_hint),
+            rollback_available=request.rollback_available,
+            confidence=1.0,
+        )
+        decision = self.decider.evaluate(observation_request)
+        if decision.decision == Decision.ALLOW:
+            execution_result.summary = safe_result["summary"]
+            execution_result.data = safe_result["data"]
+            execution_result.error = safe_result["error"]
+            return safe_result
+        if decision.decision == Decision.SANITIZE and decision.sanitized_payload:
+            execution_result.status = "sanitized_observation"
+            execution_result.summary = "Executor output was sanitized before planner observation"
+            execution_result.data = decision.sanitized_payload
+            execution_result.error = None
+            return {
+                "success": execution_result.success,
+                "status": "sanitized_observation",
+                "summary": "Executor output was sanitized before planner observation",
+                "data": decision.sanitized_payload,
+                "error": None,
+            }
+        execution_result.status = "observation_quarantined"
+        execution_result.summary = "Executor output was withheld from the planner by AgentGate"
+        execution_result.data = None
+        execution_result.error = None
+        return {
+            "success": execution_result.success,
+            "status": "observation_quarantined",
+            "summary": "Executor output was withheld from the planner by AgentGate",
+            "data": None,
+            "error": None,
+        }
+
+
+def _control_decision(proposal: Proposal) -> DecisionResponse:
+    decision = (
+        Decision.ASK_USER
+        if proposal.action_type == "ASK_USER"
+        else Decision.NEED_APPROVAL
+    )
+    return DecisionResponse(
+        decision=decision,
+        risk_level=RiskLevel.LOW if decision == Decision.ASK_USER else RiskLevel.HIGH,
+        risk_score=0.0 if decision == Decision.ASK_USER else 0.6,
+        reasons=[proposal.rationale or "Planner requested a guarded control step"],
+        next_step="ask_user" if decision == Decision.ASK_USER else "approval",
+    )
+
+
+def _opaque_arguments(arguments: Any) -> dict[str, Any]:
+    if not isinstance(arguments, dict):
+        return {"content": "[REDACTED_SENSITIVE_CONTENT]"}
+    structural_keys = {"tool_name", "owner", "repo", "issue_number", "element_id", "public"}
+    safe = {
+        str(key): safe_value(value)
+        for key, value in arguments.items()
+        if key in structural_keys
+    }
+    safe["content"] = "[REDACTED_SENSITIVE_CONTENT]"
+    return safe

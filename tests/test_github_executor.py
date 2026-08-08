@@ -107,6 +107,20 @@ class TestGitHubExecutor(unittest.TestCase):
         self.assertIn("/issues/3/comments", request.full_url)
         self.assertEqual(json.loads(request.data)["body"], "Looks good")
 
+    def test_issue_number_must_be_an_integer(self):
+        result = GitHubExecutor(token=self.token, opener=QueueOpener({})).execute(
+            "API_CALL",
+            {
+                "tool_name": "github_create_issue_comment",
+                "owner": "octo",
+                "repo": "demo",
+                "issue_number": 1.9,
+                "body": "No conversion",
+            },
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "invalid_arguments")
+
     def test_create_gist(self):
         result, request = self.execute(
             {"id": "abc", "html_url": "https://gist.example/abc", "public": False},

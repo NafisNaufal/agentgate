@@ -24,11 +24,7 @@
         "tool_name": "github_create_gist",
         "description": "Dummy billing-code review",
         "public": false,
-        "files": {
-          "billing_demo.py": {
-            "content": "def charge_customer(token, amount):\n    import stripe\n    return stripe.Charge.create(amount=amount, source=token)"
-          }
-        }
+        "files": {"billing_demo.py": {"content": "def charge_customer(token, amount):\n    import stripe\n    return stripe.Charge.create(amount=amount, source=token)"}}
       },
       "domain": "code_security",
       "target_system": "GitHub",

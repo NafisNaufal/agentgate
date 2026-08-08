@@ -1,4 +1,10 @@
-"""Sprint 1 detector architecture bake-off, per the PM's ask: benchmark different
+"""Historical Sprint 1 detector bake-off; not a production runtime selector.
+
+This benchmark preserves the evidence used before the full-LLM-only runtime was
+adopted. It imports legacy detector implementations directly and cannot change the
+normal AgentGate detector pipeline.
+
+Sprint 1 detector architecture bake-off, per the PM's ask: benchmark different
 LLMs (and architectures) before picking one.
 
 Hardware note (read this before trusting the numbers): these benchmarks were run
@@ -32,11 +38,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from agentgate.detectors import (  # noqa: E402
-    HybridPromptInjectionDetector,
-    LLMFirstInjectionDetector,
-    PromptInjectionDetector,
-)
+from agentgate.detectors.injection_hybrid import HybridPromptInjectionDetector  # noqa: E402
+from agentgate.detectors.injection_llm_first import LLMFirstInjectionDetector  # noqa: E402
+from agentgate.detectors.prompt_injection import PromptInjectionDetector  # noqa: E402
 from agentgate.detectors.llm_client import LLMUnavailable  # noqa: E402
 from agentgate.schemas import ActionRequest  # noqa: E402
 

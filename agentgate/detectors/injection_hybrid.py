@@ -1,4 +1,4 @@
-"""Architecture A: regex fast-path + local-LLM fallback, for prompt injection.
+"""Historical regex fast-path + LLM fallback used only by the legacy benchmark.
 
 Design:
   1. Run the regex PromptInjectionDetector first (near-instant, zero deps, high
@@ -14,8 +14,7 @@ Bake-off results (benchmarks/): regex alone catches 0% of paraphrased injection
 attempts; this hybrid keeps the common-case latency near zero (most actions never
 reach the LLM call at all) while closing that gap for the cases regex misses.
 
-OPT-IN, not the default: requires a local Ollama server with the model pulled. See
-agentgate/detectors/__init__.py for how to enable it.
+This module is not reachable from normal runtime configuration.
 """
 
 from __future__ import annotations

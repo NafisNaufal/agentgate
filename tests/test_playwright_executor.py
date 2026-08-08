@@ -123,7 +123,7 @@ class TestPlaywrightExecutor(unittest.TestCase):
         self.tempdir = tempfile.TemporaryDirectory()
         self.executor = PlaywrightExecutor(
             page=self.page,
-            allowed_hosts="localhost,127.0.0.1",
+            allowed_origins="http://localhost,http://127.0.0.1",
             screenshot_dir=self.tempdir.name,
             allow_injected_page_for_tests=True,
         )
@@ -143,6 +143,7 @@ class TestPlaywrightExecutor(unittest.TestCase):
         self.assertEqual(elements[0]["element_id"], "1")
         self.assertEqual(elements[0]["role"], "button")
         self.assertIn("external_send", elements[0]["risk_hint"])
+        self.assertIn("form_submit", elements[0]["risk_hint"])
         self.assertEqual(elements[1]["value_preview"], "[REDACTED]")
         self.assertNotIn("html", result.data)
         self.assertEqual(set(self.executor._selector_map), {"1", "2"})
@@ -175,12 +176,29 @@ class TestPlaywrightExecutor(unittest.TestCase):
         self.assertFalse(request.rollback_available)
         self.assertIn("delete-account", request.content_context)
 
-    def test_click_uses_mapped_element_then_invalidates_ids(self):
+    def test_submit_control_cannot_execute_as_click(self):
         self.executor.execute("BROWSER_SNAPSHOT", {})
         result = self.executor.execute("BROWSER_CLICK", {"element_id": "1"})
-        self.assertTrue(result.success)
-        self.assertEqual(self.page.locators[0].clicked, 1)
-        self.assertEqual(self.executor._selector_map, {})
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "submit_requires_guarded_action")
+        self.assertEqual(self.page.locators[0].clicked, 0)
+
+    def test_image_submit_cannot_execute_as_click(self):
+        original_evaluate = self.page.evaluate
+
+        def evaluate_image_submit(script: str, snapshot_token: str | None = None):
+            snapshot = original_evaluate(script, snapshot_token)
+            snapshot["elements"][0]["type"] = "image"
+            snapshot["elements"][0]["role"] = "submit"
+            self.page.locators[0].fingerprint["type"] = "image"
+            self.page.locators[0].fingerprint["role"] = "submit"
+            return snapshot
+
+        self.page.evaluate = evaluate_image_submit
+        self.executor.execute("BROWSER_SNAPSHOT", {})
+        result = self.executor.execute("BROWSER_CLICK", {"element_id": "1"})
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "submit_requires_guarded_action")
 
     def test_type_uses_mapped_element(self):
         self.executor.execute("BROWSER_SNAPSHOT", {})
@@ -203,6 +221,11 @@ class TestPlaywrightExecutor(unittest.TestCase):
 
     def test_disallowed_host_does_not_navigate(self):
         result = self.executor.execute("BROWSER_OPEN", {"url": "https://example.com"})
+        self.assertEqual(result.status, "url_not_allowed")
+        self.assertEqual(self.page.goto_calls, [])
+
+    def test_same_host_different_port_is_not_allowed(self):
+        result = self.executor.execute("BROWSER_OPEN", {"url": "http://localhost:9999"})
         self.assertEqual(result.status, "url_not_allowed")
         self.assertEqual(self.page.goto_calls, [])
 

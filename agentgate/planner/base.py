@@ -45,7 +45,8 @@ class Proposal:
             or args.get("tool_name")
             or ""
         )
-        payload = _payload_text(args, self.action_type)
+        content_fields = spec.content_fields if spec else None
+        payload = _payload_text(args, self.action_type, content_fields)
         risk_hints = list(dict.fromkeys([*self.risk_hint, *(spec.default_risk_hints if spec else ())]))
         rollback_available = self.rollback_available
         if spec:
@@ -64,6 +65,7 @@ class Proposal:
             confidence=self.confidence,
         )
         request._execution_argument_fingerprint = execution_argument_fingerprint(args)
+        request._execution_content_fields = content_fields
         return request
 
 
@@ -72,26 +74,36 @@ def _summarize(text: str, n: int = 120) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
-def _payload_text(arguments: dict[str, Any], action_type: str = "") -> str:
+def _payload_text(
+    arguments: dict[str, Any],
+    action_type: str = "",
+    content_fields: tuple[str, ...] | None = None,
+) -> str:
     """Collect content relevant to guardrail scanning without retaining arguments."""
     values: list[str] = []
-    keys = ("value",) if action_type == "BROWSER_TYPE" else (
-        "value",
-        "payload",
-        "action_description",
-        "question",
-        "body",
-        "content",
-        "title",
-        "description",
+    keys = content_fields if content_fields is not None else (
+        ("value",)
+        if action_type == "BROWSER_TYPE"
+        else (
+            "value",
+            "payload",
+            "action_description",
+            "question",
+            "body",
+            "content",
+            "title",
+            "description",
+        )
     )
     for key in keys:
+        if key == "files":
+            continue
         value = arguments.get(key)
         if value is not None and value != "":
             values.append(str(value))
 
     files = arguments.get("files")
-    if isinstance(files, dict):
+    if isinstance(files, dict) and (content_fields is None or "files" in content_fields):
         for name, file_data in files.items():
             content = file_data.get("content") if isinstance(file_data, dict) else file_data
             if content is not None:

@@ -1,19 +1,20 @@
-"""Full-LLM detector classes: every detection category uses the local LLM.
-
-These replace the regex-based detectors when the ``full_llm`` architecture is
-selected. Each class sends a specialised prompt to the local Ollama server and
-parses the structured JSON response into the same Finding / SensitiveEntity
-objects the rest of the engine expects.
-
-All detectors fail safe: if the LLM is unreachable they return an empty finding
-(no entities, zero risk contribution) rather than crashing the evaluation pipeline.
-"""
+"""Full-LLM detector classes for every production detection category."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..schemas import ActionRequest, SensitiveEntity
+from . import llm_client
 from .base import Detector, Finding, truncate
-from .llm_client import LLMUnavailable, chat_json
+from .llm_client import LLMUnavailable
+from .llm_validation import (
+    require_bool,
+    require_confidence,
+    require_items,
+    require_nonnegative_int,
+    require_string,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -21,23 +22,27 @@ from .llm_client import LLMUnavailable, chat_json
 # ---------------------------------------------------------------------------
 
 def _call_llm(system_prompt: str, text: str, *, model: str | None = None,
-              host: str | None = None, timeout: float = 30.0,
-              extra_options: dict | None = None) -> dict | None:
-    """Call the LLM and return parsed JSON, or None on any failure."""
+               host: str | None = None, timeout: float | None = None,
+               extra_options: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Call the required detector runtime; empty action text needs no model call."""
     if not text:
         return None
-    try:
-        return chat_json(system_prompt, f"TEXT: {text}", model=model, host=host,
-                         timeout=timeout, extra_options=extra_options)
-    except LLMUnavailable:
-        return None  # fail safe
+    return llm_client.chat_json(
+        system_prompt,
+        f"TEXT: {text}",
+        model=model,
+        host=host,
+        timeout=timeout,
+        extra_options=extra_options,
+    )
 
 
 class _LLMDetectorBase(Detector):
     """Common init shared by every full-LLM detector."""
 
     def __init__(self, model: str | None = None, host: str | None = None,
-                 timeout: float = 30.0, extra_options: dict | None = None):
+                 timeout: float | None = None,
+                 extra_options: dict[str, Any] | None = None):
         self.model = model
         self.host = host
         self.timeout = timeout
@@ -67,20 +72,29 @@ class LLMPIIDetector(_LLMDetectorBase):
 
     def scan(self, req: ActionRequest) -> Finding:
         data = self._llm(_PII_PROMPT, req.scan_text)
-        if not data or not data.get("has_pii"):
+        if data is None:
             return self._finding()
+        has_pii = require_bool(data, "has_pii")
+        items = require_items(data)
+        if not has_pii:
+            if items:
+                raise LLMUnavailable("PII response contradicts has_pii=false")
+            return self._finding()
+        if not items:
+            raise LLMUnavailable("PII response contradicts has_pii=true")
 
         entities: list[SensitiveEntity] = []
         reasons: list[str] = []
         sev_weight = {"LOW": 0.1, "MEDIUM": 0.25, "HIGH": 0.45, "CRITICAL": 0.6}
 
-        for item in data.get("items", []):
-            kind = str(item.get("type", "PII")).upper()
-            value = str(item.get("value", ""))
-            severity = str(item.get("severity", "MEDIUM")).upper()
-            if severity not in sev_weight:
-                severity = "MEDIUM"
-            entities.append(SensitiveEntity(kind, truncate(value), self.name, severity))
+        allowed_kinds = {"EMAIL", "PHONE", "CREDIT_CARD", "BOOKING_REF"}
+        for item in items:
+            kind = require_string(item, "type", allowed_kinds)
+            require_string(item, "value")
+            severity = require_string(item, "severity", {"LOW", "MEDIUM", "HIGH"})
+            entities.append(
+                SensitiveEntity(kind, f"[REDACTED_{kind}]", self.name, severity)
+            )
 
         if entities:
             kinds = sorted({e.kind for e in entities})
@@ -100,7 +114,8 @@ _SECRET_PROMPT = (
     "private keys, or credential assignments. "
     "Reply ONLY as JSON: "
     '{"has_secrets": true|false, "items": [{"type": "AWS_ACCESS_KEY"|"GITHUB_TOKEN"|'
-    '"OPENAI_KEY"|"STRIPE_KEY"|"PRIVATE_KEY"|"CREDENTIAL_ASSIGNMENT"|"JWT"|"GENERIC_SECRET", '
+    '"GITHUB_PAT"|"OPENAI_KEY"|"SLACK_TOKEN"|"STRIPE_KEY"|"GOOGLE_API_KEY"|'
+    '"PRIVATE_KEY"|"CREDENTIAL_ASSIGNMENT"|"JWT"|"ENV_FILE"|"GENERIC_SECRET", '
     '"value": "<masked preview>", "severity": "HIGH"|"CRITICAL"}]}'
 )
 
@@ -110,20 +125,42 @@ class LLMSecretDetector(_LLMDetectorBase):
 
     def scan(self, req: ActionRequest) -> Finding:
         data = self._llm(_SECRET_PROMPT, req.scan_text)
-        if not data or not data.get("has_secrets"):
+        if data is None:
             return self._finding()
+        has_secrets = require_bool(data, "has_secrets")
+        items = require_items(data)
+        if not has_secrets:
+            if items:
+                raise LLMUnavailable("secret response contradicts has_secrets=false")
+            return self._finding()
+        if not items:
+            raise LLMUnavailable("secret response contradicts has_secrets=true")
 
         entities: list[SensitiveEntity] = []
         reasons: list[str] = []
         tags: set[str] = set()
 
-        for item in data.get("items", []):
-            kind = str(item.get("type", "GENERIC_SECRET")).upper()
-            value = str(item.get("value", ""))
-            severity = str(item.get("severity", "HIGH")).upper()
-            if severity not in ("HIGH", "CRITICAL"):
-                severity = "HIGH"
-            entities.append(SensitiveEntity(kind, truncate(value), self.name, severity))
+        allowed_kinds = {
+            "AWS_ACCESS_KEY",
+            "GITHUB_TOKEN",
+            "GITHUB_PAT",
+            "OPENAI_KEY",
+            "SLACK_TOKEN",
+            "STRIPE_KEY",
+            "GOOGLE_API_KEY",
+            "PRIVATE_KEY",
+            "CREDENTIAL_ASSIGNMENT",
+            "JWT",
+            "ENV_FILE",
+            "GENERIC_SECRET",
+        }
+        for item in items:
+            kind = require_string(item, "type", allowed_kinds)
+            require_string(item, "value")
+            severity = require_string(item, "severity", {"HIGH", "CRITICAL"})
+            entities.append(
+                SensitiveEntity(kind, f"[REDACTED_{kind}]", self.name, severity)
+            )
 
         if entities:
             tags.add("source_code")
@@ -155,31 +192,63 @@ class LLMSourceCodeDetector(_LLMDetectorBase):
 
     def scan(self, req: ActionRequest) -> Finding:
         data = self._llm(_SOURCE_CODE_PROMPT, req.scan_text)
-        if not data:
+        if data is None:
+            if "source_code" in req.risk_hint:
+                return self._finding(
+                    entities=[
+                        SensitiveEntity(
+                            "SOURCE_CODE",
+                            "[TRUSTED_SOURCE_CODE_METADATA]",
+                            self.name,
+                            "MEDIUM",
+                        )
+                    ],
+                    reasons=["Trusted tool metadata identifies source-code content"],
+                    risk_contribution=0.3,
+                    tags={"source_code"},
+                )
             return self._finding()
+
+        has_code = require_bool(data, "has_code")
+        has_codename = require_bool(data, "has_codename")
+        language = require_string(data, "language")
+        confidence = require_confidence(data)
+        if not has_code and not has_codename and language:
+            raise LLMUnavailable("source-code response contradicts has_code=false")
 
         entities: list[SensitiveEntity] = []
         reasons: list[str] = []
         tags: set[str] = set()
         contribution = 0.0
 
-        if data.get("has_code"):
+        if has_code or "source_code" in req.risk_hint:
             tags.add("source_code")
-            lang = data.get("language", "unknown")
-            conf = float(data.get("confidence", 0.5))
+            language = language or "unknown"
             entities.append(SensitiveEntity("SOURCE_CODE",
-                            truncate(f"{lang} code (conf={conf:.2f})"),
+                            truncate(f"{language} code (conf={confidence:.2f})"),
                             self.name, "MEDIUM"))
-            reasons.append(f"Source code detected ({lang}, confidence {conf:.2f})")
+            reasons.append(
+                f"Source code detected ({language}, confidence {confidence:.2f})"
+                if has_code
+                else "Trusted tool metadata identifies source-code content"
+            )
             contribution = 0.3
             if "external_send" in req.risk_hint or req.action_type == "BROWSER_SUBMIT":
                 contribution = 0.6
                 reasons.append("Source code paired with an outbound/send action")
 
-        if data.get("has_codename"):
-            entities.append(SensitiveEntity("INTERNAL_CODENAME",
-                            truncate(req.scan_text[:48]), self.name, "MEDIUM"))
+        if has_codename:
+            tags.add("source_code")
+            entities.append(
+                SensitiveEntity(
+                    "INTERNAL_CODENAME",
+                    "[REDACTED_INTERNAL_CODENAME]",
+                    self.name,
+                    "MEDIUM",
+                )
+            )
             reasons.append("Internal codename detected")
+            contribution = max(contribution, 0.25)
 
         return self._finding(entities=entities, reasons=reasons,
                              risk_contribution=contribution, tags=tags)
@@ -205,17 +274,41 @@ class LLMPaymentPhishingDetector(_LLMDetectorBase):
 
     def scan(self, req: ActionRequest) -> Finding:
         data = self._llm(_PAYMENT_PROMPT, req.scan_text)
-        if not data:
+        if data is None:
+            if "payment_related" in req.risk_hint:
+                external = "external_send" in req.risk_hint
+                return self._finding(
+                    entities=[
+                        SensitiveEntity(
+                            "PAYMENT_CONTENT",
+                            "[TRUSTED_PAYMENT_METADATA]",
+                            self.name,
+                            "HIGH",
+                        )
+                    ],
+                    reasons=[
+                        "Trusted tool metadata identifies payment-related content",
+                        *(
+                            ["Payment content is paired with an external send"]
+                            if external
+                            else []
+                        ),
+                    ],
+                    risk_contribution=0.6 if external else 0.5,
+                    tags={"payment_related", *({"external_send"} if external else set())},
+                )
             return self._finding()
+        model_payment = require_bool(data, "has_payment")
+        has_cred = require_bool(data, "has_credential_request")
+        has_urgency = require_bool(data, "has_urgency")
+        require_confidence(data)
 
         entities: list[SensitiveEntity] = []
         reasons: list[str] = []
         tags: set[str] = set()
         contribution = 0.0
 
-        has_payment = data.get("has_payment") or "payment_related" in req.risk_hint
-        has_cred = data.get("has_credential_request", False)
-        has_urgency = data.get("has_urgency", False)
+        has_payment = model_payment or "payment_related" in req.risk_hint
 
         if has_payment:
             tags.add("payment_related")
@@ -264,26 +357,32 @@ class LLMActionIntentDetector(_LLMDetectorBase):
 
     def scan(self, req: ActionRequest) -> Finding:
         data = self._llm(_INTENT_PROMPT, req.scan_text)
-        if not data:
+        if data is None:
             return self._finding()
+        is_bulk = require_bool(data, "is_bulk")
+        estimated_count = require_nonnegative_int(data, "estimated_count")
+        is_destructive = require_bool(data, "is_destructive")
+        is_external_send = require_bool(data, "is_external_send")
+        require_confidence(data)
+        if not is_bulk and estimated_count >= 20:
+            raise LLMUnavailable("action-intent response contradicts is_bulk=false")
 
         reasons: list[str] = []
         tags: set[str] = set()
         contribution = 0.0
 
-        if data.get("is_bulk"):
-            count = data.get("estimated_count", 0)
+        if is_bulk:
             tags.add("bulk_action")
-            reasons.append(f"Bulk operation detected ({count or 'many'} items)")
+            reasons.append(f"Bulk operation detected ({estimated_count or 'many'} items)")
             contribution = max(contribution, 0.5)
 
-        if data.get("is_destructive"):
+        if is_destructive:
             tags.add("destructive_action")
             base = 0.7 if not req.rollback_available else 0.5
             reasons.append("Destructive verb detected (delete/cancel/purge/...)")
             contribution = max(contribution, base)
 
-        if data.get("is_external_send"):
+        if is_external_send:
             tags.add("external_send")
             reasons.append("Outbound send to an external recipient detected")
             contribution = max(contribution, 0.35)

@@ -36,9 +36,7 @@
     },
     {
       "action_type": "BROWSER_SUBMIT",
-      "arguments": {
-        "element_id": "2"
-      },
+      "arguments": {"element_id": "2"},
       "domain": "booking_style",
       "target_system": "browser",
       "risk_hint": ["external_send", "payment_related"],

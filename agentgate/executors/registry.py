@@ -38,7 +38,15 @@ class ExecutorRegistry:
                 error=f"No executor registered for {name!s}",
             )
         try:
-            return executor.execute(action_type, arguments)
+            result = executor.execute(action_type, arguments)
+            if not isinstance(result, ExecutionResult):
+                return ExecutionResult(
+                    success=False,
+                    status="invalid_executor_result",
+                    summary="Executor returned an invalid result",
+                    error="Executors must return ExecutionResult",
+                )
+            return result
         except Exception as exc:
             return ExecutionResult(
                 success=False,
@@ -59,9 +67,7 @@ class ExecutorRegistry:
             return request
         try:
             enriched = enrich(request, arguments)
-            fingerprint = getattr(request, "_execution_argument_fingerprint", None)
-            if fingerprint:
-                enriched._execution_argument_fingerprint = fingerprint
+            _copy_execution_metadata(request, enriched)
             return enriched
         except Exception:
             enriched = replace(
@@ -78,9 +84,7 @@ class ExecutorRegistry:
                     if part
                 ),
             )
-            fingerprint = getattr(request, "_execution_argument_fingerprint", None)
-            if fingerprint:
-                enriched._execution_argument_fingerprint = fingerprint
+            _copy_execution_metadata(request, enriched)
             return enriched
 
     def close(self) -> None:
@@ -112,3 +116,10 @@ def build_default_executor_registry() -> ExecutorRegistry:
     for action_type in BROWSER_ACTIONS:
         registry.register_action(action_type, browser)
     return registry
+
+
+def _copy_execution_metadata(source: ActionRequest, target: ActionRequest) -> None:
+    for name in ("_execution_argument_fingerprint", "_execution_content_fields"):
+        value = getattr(source, name, None)
+        if value is not None:
+            setattr(target, name, value)

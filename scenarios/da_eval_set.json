@@ -840,7 +840,7 @@
         "action_type": "FILE_READ",
         "domain": "code_security",
         "target_system": "local file",
-        "payload_summary": "ENCODED_KEY = 'c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU=', forwarded to LLM without modification; a Base64-encoded credential the current regex-only secret detector cannot recognize",
+        "payload_summary": "ENCODED_KEY = 'c2VjcmV0LWNyZWRlbnRpYWwtdmFsdWU=', containing a Base64-encoded configuration value",
         "rollback_available": true,
         "confidence": 0.88
       }

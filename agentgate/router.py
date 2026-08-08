@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .executors import ExecutionResult, ExecutorRegistry
-from .planner.base import _payload_text, execution_argument_fingerprint
+from .planner.base import execution_argument_fingerprint
 from .sanitizer import sanitize
 from .schemas import ActionRequest, Decision, DecisionResponse
 
@@ -21,7 +21,7 @@ class EnforcementOutcome:
     def to_dict(self) -> dict[str, Any]:
         result = {
             "status": self.status,
-            "message": self.message,
+            "message": sanitize(self.message),
         }
         if self.execution_result:
             result["execution_result"] = self.execution_result.to_dict()
@@ -105,7 +105,7 @@ class DecisionRouter:
 
         result = self.executors.execute(req.action_type, execution_arguments)
         status = "executed" if result.success else "execution_failed"
-        return EnforcementOutcome(status, result.summary, result)
+        return EnforcementOutcome(status, sanitize(result.summary), result)
 
 
 def _sanitized_arguments(
@@ -123,15 +123,9 @@ def _sanitized_arguments(
     if req.action_type != "API_CALL":
         return None
 
-    tool_content_fields = {
-        "github_create_issue": ("title", "body"),
-        "github_create_issue_comment": ("body",),
-        "github_create_gist": ("description",),
-    }
-    allowed_keys = tool_content_fields.get(
-        req.tool_name,
-        ("value", "payload", "body", "content"),
-    )
+    allowed_keys = getattr(req, "_execution_content_fields", None)
+    if not allowed_keys:
+        return None
     content_keys = [
         key
         for key in allowed_keys
@@ -170,15 +164,6 @@ def _sanitized_arguments(
             sanitized_files[safe_name] = value
         updated["files"] = files = sanitized_files
 
-    if (
-        len(content_keys) == 1
-        and not file_contents
-        and not isinstance(files, dict)
-        and _payload_text(updated, req.action_type) == updated[content_keys[0]]
-    ):
-        updated[content_keys[0]] = sanitized_payload
-        return updated
-
     for key in content_keys:
         redacted = sanitize(updated[key])
         changed = changed or redacted != updated[key]
@@ -192,19 +177,4 @@ def _sanitized_arguments(
 
 def _arguments_match_request(req: ActionRequest, arguments: Mapping[str, Any]) -> bool:
     fingerprint = getattr(req, "_execution_argument_fingerprint", None)
-    if fingerprint:
-        return execution_argument_fingerprint(dict(arguments)) == fingerprint
-    if req.action_type == "API_CALL" and str(arguments.get("tool_name", "")) != req.tool_name:
-        return False
-    target = (
-        arguments.get("url")
-        or arguments.get("path")
-        or arguments.get("element_id")
-        or arguments.get("tool_name")
-        or ""
-    )
-    if req.target and str(target) != req.target:
-        return False
-    if req.raw_payload:
-        return _payload_text(dict(arguments), req.action_type) == req.raw_payload
-    return True
+    return bool(fingerprint) and execution_argument_fingerprint(dict(arguments)) == fingerprint
