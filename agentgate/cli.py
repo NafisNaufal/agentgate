@@ -22,9 +22,12 @@ from pathlib import Path
 from .action_space import ACTION_TYPES
 from .decision import DecisionEngine
 from .detectors import get_default_detectors
+from .executors import build_default_executor_registry
+from .executors.base import safe_value
 from .loop import AgentLoop, RunResult
 from .planner import ReplayPlanner
 from .router import DecisionRouter
+from .sanitizer import sanitize
 from .schemas import ActionRequest
 from .tools import ToolRegistry
 
@@ -55,23 +58,26 @@ def _scenarios() -> list[Path]:
 
 
 def _print_run(result: RunResult) -> None:
-    print(_c("_b", "\nTask: ") + result.task)
+    print(_c("_b", "\nTask: ") + sanitize(result.task))
     for s in result.steps:
         if s.rejected_reason:
-            print(f"  [{s.index}] {_c('BLOCK', 'REJECTED')} {s.proposal.action_type}: {s.rejected_reason}")
+            print(
+                f"  [{s.index}] {_c('BLOCK', 'REJECTED')} {s.proposal.action_type}: "
+                f"{sanitize(s.rejected_reason)}"
+            )
             continue
         d = s.decision
         print(f"  [{s.index}] {s.proposal.action_type:<16} -> {_c(d.decision.value, d.decision.value)} "
               f"{_c('_dim', f'risk={d.risk_level.value} score={d.risk_score} {s.eval_ms:.2f}ms')}")
         for r in d.reasons:
-            print(f"        • {r}")
+            print(f"        • {sanitize(r)}")
         if d.triggered_policies:
             print(f"        {_c('_dim', 'policies: ' + ', '.join(d.triggered_policies))}")
         if d.sanitized_payload:
             print(f"        {_c('SANITIZE', 'sanitized:')} {d.sanitized_payload[:90]}")
         if s.outcome:
             print(f"        {_c('_dim', s.outcome.status + ' — ' + s.outcome.message)}")
-    print(_c("_b", "\nResult: ") + f"{result.status} — {result.final_message}")
+    print(_c("_b", "\nResult: ") + f"{result.status} — {sanitize(result.final_message)}")
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -104,13 +110,24 @@ def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
     planner = ReplayPlanner(scenario["steps"])
     decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
-    loop = AgentLoop(planner, DecisionRouter(), decider=decider)
+    execute = getattr(args, "execute", False)
+    executors = build_default_executor_registry() if execute else None
+    router = DecisionRouter(executors, execute=execute)
+    loop = AgentLoop(planner, router, decider=decider)
     print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected', '')}"))
-    result = loop.run(scenario["task"])
+    try:
+        result = loop.run(scenario["task"])
+    finally:
+        if executors:
+            executors.close()
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
     else:
         _print_run(result)
+    if execute and result.status in {"awaiting_approval", "ask_user"}:
+        return 2
+    if execute and result.status != "completed":
+        return 1
     return 0
 
 
@@ -137,12 +154,12 @@ def cmd_eval(args: argparse.Namespace) -> int:
     decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
     decision = decider.evaluate(req)
     if args.json:
-        print(decision.to_json())
+        print(json.dumps(safe_value(decision.to_dict()), indent=2))
     else:
         print(f"{_c(decision.decision.value, decision.decision.value)}  "
               f"risk={decision.risk_level.value} score={decision.risk_score}")
         for r in decision.reasons:
-            print(f"  • {r}")
+            print(f"  • {sanitize(r)}")
         if decision.triggered_policies:
             print(f"  policies: {', '.join(decision.triggered_policies)}")
         if decision.sanitized_payload:
@@ -168,6 +185,11 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="replay a scenario through the decision engine")
     r.add_argument("scenario")
     r.add_argument("--json", action="store_true")
+    r.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform ALLOW/SANITIZE actions with real executors (default: dry-run)",
+    )
     _add_architecture_flag(r)
     r.set_defaults(func=cmd_run)
 
