@@ -13,6 +13,7 @@ dependencies = []   # core engine is pure stdlib; runs with no third-party packa
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+browser = ["playwright>=1.45"]
 
 [project.scripts]
 agentgate = "agentgate.cli:main"

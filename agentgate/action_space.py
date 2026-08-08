@@ -57,6 +57,7 @@ def is_executable(req: ActionRequest) -> bool:
     return req.action_type in {
         "API_CALL",
         "BROWSER_OPEN",
+        "BROWSER_SNAPSHOT",
         "BROWSER_CLICK",
         "BROWSER_TYPE",
         "BROWSER_SELECT",
