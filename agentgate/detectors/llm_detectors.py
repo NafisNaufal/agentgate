@@ -75,11 +75,15 @@ class LLMPIIDetector(_LLMDetectorBase):
         if data is None:
             return self._finding()
         has_pii = require_bool(data, "has_pii")
-        items = require_items(data)
         if not has_pii:
-            if items:
+            # "items" is legitimately absent on a well-formed negative response -
+            # only require it (and validate its shape) when has_pii actually says
+            # there's something to list. Requiring it unconditionally here was
+            # raising LLMUnavailable on correct, common "nothing found" responses.
+            if data.get("items"):
                 raise LLMUnavailable("PII response contradicts has_pii=false")
             return self._finding()
+        items = require_items(data)
         if not items:
             raise LLMUnavailable("PII response contradicts has_pii=true")
 
@@ -112,6 +116,12 @@ _SECRET_PROMPT = (
     "You are a secret/credential classifier inside an AI-agent guardrail. "
     "Analyse the TEXT and identify any secrets, API keys, tokens, passwords, "
     "private keys, or credential assignments. "
+    "Only report a finding when an actual credential VALUE is present in the "
+    "text, a real-looking key/token/password string. Do NOT report a finding "
+    "just because the text mentions a service name (e.g. 'stripe', 'aws', "
+    "'github'), contains a payment or checkout LINK/URL, or calls a library/SDK "
+    "by name (e.g. 'import stripe', 'stripe.Charge.create') without an actual "
+    "secret value being present - a payment link is not a credential. "
     "Reply ONLY as JSON: "
     '{"has_secrets": true|false, "items": [{"type": "AWS_ACCESS_KEY"|"GITHUB_TOKEN"|'
     '"GITHUB_PAT"|"OPENAI_KEY"|"SLACK_TOKEN"|"STRIPE_KEY"|"GOOGLE_API_KEY"|'
@@ -128,11 +138,13 @@ class LLMSecretDetector(_LLMDetectorBase):
         if data is None:
             return self._finding()
         has_secrets = require_bool(data, "has_secrets")
-        items = require_items(data)
         if not has_secrets:
-            if items:
+            # Same reasoning as the PII detector above: "items" is legitimately
+            # absent on a well-formed negative response.
+            if data.get("items"):
                 raise LLMUnavailable("secret response contradicts has_secrets=false")
             return self._finding()
+        items = require_items(data)
         if not items:
             raise LLMUnavailable("secret response contradicts has_secrets=true")
 
@@ -345,6 +357,13 @@ _INTENT_PROMPT = (
     "the TEXT and determine whether it expresses: (1) a bulk operation affecting "
     "many items, (2) a destructive action (delete/remove/purge/cancel), or "
     "(3) an outbound send to an external recipient. "
+    "A bulk operation means a WRITE, DELETE, SEND, MODIFY, or ARCHIVE affecting "
+    "many items at once. A read-only SEARCH, QUERY, FILTER, or LIST that merely "
+    "looks through many items without changing any of them is NOT a bulk "
+    "operation - answer is_bulk=false for those regardless of how many items are "
+    "searched, since nothing is actually being modified. Similarly, a plain "
+    "UPDATE to a single record's own fields (not a bulk update, not a send) is "
+    "not bulk or destructive. "
     "Reply ONLY as JSON: "
     '{"is_bulk": true|false, "estimated_count": <number or 0>, '
     '"is_destructive": true|false, "is_external_send": true|false, '
