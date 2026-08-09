@@ -33,7 +33,7 @@ from agentgate.schemas import ActionRequest, Decision, RiskLevel
 from agentgate.tools import ToolRegistry, ToolSpec
 from tests.fake_llm import fake_chat_json
 
-SCENARIO_DIR = Path(__file__).resolve().parent.parent / "scenarios"
+SCENARIO_DIR = Path(__file__).resolve().parent.parent / "agentgate" / "scenarios"
 
 
 def AR(**kw) -> ActionRequest:

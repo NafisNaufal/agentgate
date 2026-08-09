@@ -1,8 +1,8 @@
-"""Runs the DA-authored test scenarios (scenarios/da_eval_set.json) against the real
+"""Runs the DA-authored test scenarios (benchmarks/data/da_eval_set.json) against the real
 DecisionEngine and reports actual vs. expected decision.
 
 This is the first eval data in the repo not authored by whoever wrote the detectors
-(see scenarios/da_eval_set.json's _conversion_note). Where AgentGate disagrees with
+(see benchmarks/data/da_eval_set.json's _conversion_note). Where AgentGate disagrees with
 the DA's expected decision, that is reported as a mismatch, not silently reconciled -
 the point of independent test data is to surface exactly these gaps.
 
@@ -34,7 +34,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    data = json.loads((ROOT / "scenarios" / "da_eval_set.json").read_text())
+    data = json.loads((ROOT / "benchmarks" / "data" / "da_eval_set.json").read_text())
     cases = data["cases"]
     if args.case:
         cases = [c for c in cases if any(needle in c["id"] for needle in args.case)]
