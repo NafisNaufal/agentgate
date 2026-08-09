@@ -8,8 +8,8 @@ the point of independent test data is to surface exactly these gaps.
 
 Usage:
   python3 benchmarks/da_eval_runner.py
-  python3 benchmarks/da_eval_runner.py --case TC-P-005      # run just one case, full detail
-  python3 benchmarks/da_eval_runner.py --case TC-P --case DATA-0   # substring match, multiple allowed
+  python3 benchmarks/da_eval_runner.py --case RSV-04         # run just one case, full detail
+  python3 benchmarks/da_eval_runner.py --case RSV --case DATA-0   # substring match, multiple allowed
 """
 
 from __future__ import annotations
