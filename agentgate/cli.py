@@ -6,11 +6,8 @@ Commands:
   run <scenario>    replay a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
 
-Runs with zero third-party dependencies and no API key required. The default
-detector architecture is "hybrid": it uses a local Ollama server if one is running
-to catch paraphrased prompt-injection attempts regex alone would miss, but never
-requires it - without Ollama it fails safe and behaves like plain regex. Pass
---architecture to change it - see agentgate/detectors/__init__.py.
+The guardrail always uses the full local-LLM detector suite via Ollama. The planner
+is a separate layer and defaults to deterministic scenario replay.
 """
 
 from __future__ import annotations
@@ -18,19 +15,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
+from importlib.resources import files
+from typing import Any
 
 from .action_space import ACTION_TYPES
 from .decision import DecisionEngine
-from .detectors import get_default_detectors
+from .executors import build_default_executor_registry
+from .executors.base import safe_value
 from .loop import AgentLoop, RunResult
 from .planner import ReplayPlanner
 from .router import DecisionRouter
+from .sanitizer import sanitize
 from .schemas import ActionRequest
 from .tools import ToolRegistry
 
-ROOT = Path(__file__).resolve().parent.parent
-SCENARIO_DIR = ROOT / "scenarios"
+SCENARIO_DIR = files("agentgate").joinpath("scenarios")
 
 _C = {
     "ALLOW": "\033[92m", "BLOCK": "\033[91m", "NEED_APPROVAL": "\033[93m",
@@ -51,28 +50,36 @@ def _load_scenario(name: str) -> dict:
     return json.loads(path.read_text())
 
 
-def _scenarios() -> list[Path]:
-    return sorted(SCENARIO_DIR.glob("*.json"))
+def _scenarios() -> list[Any]:
+    return sorted(
+        (path for path in SCENARIO_DIR.iterdir() if path.name.endswith(".json")),
+        key=lambda path: path.name,
+    )
 
 
 def _print_run(result: RunResult) -> None:
-    print(_c("_b", "\nTask: ") + result.task)
+    print(_c("_b", "\nTask: ") + sanitize(result.task))
     for s in result.steps:
         if s.rejected_reason:
-            print(f"  [{s.index}] {_c('BLOCK', 'REJECTED')} {s.proposal.action_type}: {s.rejected_reason}")
+            print(
+                f"  [{s.index}] {_c('BLOCK', 'REJECTED')} {s.proposal.action_type}: "
+                f"{sanitize(s.rejected_reason)}"
+            )
             continue
         d = s.decision
         print(f"  [{s.index}] {s.proposal.action_type:<16} -> {_c(d.decision.value, d.decision.value)} "
               f"{_c('_dim', f'risk={d.risk_level.value} score={d.risk_score} {s.eval_ms:.2f}ms')}")
         for r in d.reasons:
-            print(f"        • {r}")
+            print(f"        • {sanitize(r)}")
         if d.triggered_policies:
             print(f"        {_c('_dim', 'policies: ' + ', '.join(d.triggered_policies))}")
         if d.sanitized_payload:
             print(f"        {_c('SANITIZE', 'sanitized:')} {d.sanitized_payload[:90]}")
         if s.outcome:
-            print(f"        {_c('_dim', s.outcome.status + ' — ' + s.outcome.message)}")
-    print(_c("_b", "\nResult: ") + f"{result.status} — {result.final_message}")
+            print(
+                f"        {_c('_dim', s.outcome.status + ' — ' + sanitize(s.outcome.message))}"
+            )
+    print(_c("_b", "\nResult: ") + f"{result.status} — {sanitize(result.final_message)}")
 
 
 def cmd_list(_: argparse.Namespace) -> int:
@@ -104,14 +111,25 @@ def cmd_tools(_: argparse.Namespace) -> int:
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
     planner = ReplayPlanner(scenario["steps"])
-    decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
-    loop = AgentLoop(planner, DecisionRouter(), decider=decider)
+    decider = DecisionEngine()
+    execute = getattr(args, "execute", False)
+    executors = build_default_executor_registry() if execute else None
+    router = DecisionRouter(executors, execute=execute)
+    loop = AgentLoop(planner, router, decider=decider)
     print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected', '')}"))
-    result = loop.run(scenario["task"])
+    try:
+        result = loop.run(scenario["task"])
+    finally:
+        if executors:
+            executors.close()
     if args.json:
         print(json.dumps(result.to_dict(), indent=2))
     else:
         _print_run(result)
+    if execute and result.status in {"awaiting_approval", "ask_user"}:
+        return 2
+    if execute and result.status != "completed":
+        return 1
     return 0
 
 
@@ -123,41 +141,38 @@ def cmd_eval(args: argparse.Namespace) -> int:
         print(_c("_dim", f"Allowed: {', '.join(sorted(ACTION_TYPES))}"))
         return 1
 
+    registry = ToolRegistry()
+    spec = registry.get(args.tool_name) if args.action_type == "API_CALL" else None
+    risk_hints = list(
+        dict.fromkeys([*(args.risk_hint or []), *(spec.default_risk_hints if spec else ())])
+    )
     req = ActionRequest(
         action_type=args.action_type,
         domain=args.domain,
-        target_system=args.target_system,
+        target_system=spec.target_system if spec else args.target_system,
         tool_name=args.tool_name,
         target=args.target,
         payload_summary=args.payload,
         raw_payload=args.payload,
         content_context=args.context,
-        risk_hint=args.risk_hint or [],
+        risk_hint=risk_hints,
+        rollback_available=spec.rollback_available if spec else True,
         confidence=args.confidence,
     )
-    decider = DecisionEngine(detectors=get_default_detectors(args.architecture))
+    decider = DecisionEngine()
     decision = decider.evaluate(req)
     if args.json:
-        print(decision.to_json())
+        print(json.dumps(safe_value(decision.to_dict()), indent=2))
     else:
         print(f"{_c(decision.decision.value, decision.decision.value)}  "
               f"risk={decision.risk_level.value} score={decision.risk_score}")
         for r in decision.reasons:
-            print(f"  • {r}")
+            print(f"  • {sanitize(r)}")
         if decision.triggered_policies:
             print(f"  policies: {', '.join(decision.triggered_policies)}")
         if decision.sanitized_payload:
             print(f"  sanitized: {decision.sanitized_payload}")
     return 0
-
-
-def _add_architecture_flag(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--architecture", choices=["regex", "hybrid", "llm_first"], default=None,
-        help="detector architecture for prompt-injection detection (default: hybrid; "
-             "uses Ollama if running, fails safe to regex-only behavior if not). "
-             "'regex' forces zero-dependency mode explicitly.",
-    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -170,7 +185,11 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="replay a scenario through the decision engine")
     r.add_argument("scenario")
     r.add_argument("--json", action="store_true")
-    _add_architecture_flag(r)
+    r.add_argument(
+        "--execute",
+        action="store_true",
+        help="perform ALLOW/SANITIZE actions with real executors (default: dry-run)",
+    )
     r.set_defaults(func=cmd_run)
 
     e = sub.add_parser("eval", help="evaluate a single ad-hoc action")
@@ -184,7 +203,6 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--risk-hint", action="append")
     e.add_argument("--confidence", type=float, default=1.0)
     e.add_argument("--json", action="store_true")
-    _add_architecture_flag(e)
     e.set_defaults(func=cmd_eval)
 
     return p

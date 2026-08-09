@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentgate"
-version = "0.1.0"
+version = "0.2.0"
 description = "A pre-action guardrail for AI agent tool calls."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,12 +13,17 @@ dependencies = []   # core engine is pure stdlib; runs with no third-party packa
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+browser = ["playwright>=1.45"]
 
 [project.scripts]
 agentgate = "agentgate.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["agentgate*"]
+
+[tool.setuptools.package-data]
+"agentgate" = ["scenarios/*.json"]
+"agentgate.policy" = ["packs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

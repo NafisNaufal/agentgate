@@ -9,7 +9,8 @@ happen".
 from __future__ import annotations
 
 from . import risk
-from .detectors import DEFAULT_DETECTORS, Detector
+from .detectors import Detector, get_default_detectors
+from .detectors.llm_client import LLMUnavailable
 from .policy import PolicyContext, PolicyEngine
 from .sanitizer import sanitize
 from .schemas import ActionRequest, Decision, DecisionResponse, RiskLevel
@@ -55,7 +56,7 @@ class DecisionEngine:
         detectors: list[Detector] | None = None,
         policy_engine: PolicyEngine | None = None,
     ):
-        self.detectors = detectors if detectors is not None else DEFAULT_DETECTORS
+        self.detectors = detectors if detectors is not None else get_default_detectors()
         self.policy_engine = policy_engine if policy_engine is not None else PolicyEngine()
 
     def evaluate(self, req: ActionRequest) -> DecisionResponse:
@@ -65,9 +66,20 @@ class DecisionEngine:
         contributions: list[float] = []
         tags: set[str] = set()
         entity_kinds: set[str] = set()
+        detector_error: str | None = None
 
         for det in self.detectors:
-            finding = det.scan(req)
+            try:
+                finding = det.scan(req)
+            except LLMUnavailable:
+                detector_error = (
+                    "LLM detector is unavailable. Ensure Ollama is running and the "
+                    "configured model is installed."
+                )
+                break
+            except Exception:
+                detector_error = f"LLM detector {det.name!r} failed; action held for review."
+                break
             if not finding.triggered:
                 continue
             entities.extend(finding.entities)
@@ -76,26 +88,26 @@ class DecisionEngine:
             tags |= finding.tags
             entity_kinds |= {e.kind for e in finding.entities}
 
-        # 2. Risk score (detector-driven). CRITICAL is reserved for categorically
-        #    critical signals (a CRITICAL-severity entity such as a live secret or a
-        #    credential request) or a CRITICAL policy floor. A pile-up of MEDIUM/HIGH
-        #    signals caps at HIGH so legitimate-but-risky actions route to approval
-        #    rather than being hard-blocked.
+        # 2. Policy
+        ctx = PolicyContext(tags=tags, entity_kinds=entity_kinds)
+        policy = self.policy_engine.evaluate(req, ctx)
+
+        # 3. Risk score and policy floor. CRITICAL is reserved for categorically
+        #    critical signals or a CRITICAL policy floor. Accumulated lower-severity
+        #    findings cap at HIGH so legitimate-but-risky actions route to approval.
         base_score = risk.combine(contributions)
         has_critical_entity = any(e.severity == "CRITICAL" for e in entities)
         if not has_critical_entity:
             base_score = min(base_score, 0.84)
-
-        # 3. Policy
-        ctx = PolicyContext(tags=tags, entity_kinds=entity_kinds)
-        policy = self.policy_engine.evaluate(req, ctx)
-
-        # 4. Risk floor from policy, then band
         score = risk.apply_floor(base_score, policy.risk_floor)
+        if detector_error:
+            score = risk.apply_floor(score, RiskLevel.HIGH)
         level = risk.score_to_level(score)
 
         # 5. Final decision = strongest of (policy decision, risk-band decision)
         decision = _stronger(policy.decision, _risk_decision(level))
+        if detector_error:
+            decision = _stronger(decision, Decision.NEED_APPROVAL)
 
         # 5b. Low-confidence override: a NEED_APPROVAL routed off a guess the planner
         # itself wasn't sure about should clarify intent first, not go straight to a
@@ -105,6 +117,7 @@ class DecisionEngine:
         # resolving an ambiguous one.
         if (
             decision == Decision.NEED_APPROVAL
+            and detector_error is None
             and req.confidence < _LOW_CONFIDENCE_THRESHOLD
             and req.action_type in _CONFIDENCE_GATED_TYPES
         ):
@@ -121,6 +134,8 @@ class DecisionEngine:
         if decision == Decision.SANITIZE and sanitized_payload is None:
             decision = Decision.NEED_APPROVAL
 
+        if detector_error:
+            reasons.append(detector_error)
         all_reasons = reasons + [r for r in policy.reasons if r not in reasons]
         if not all_reasons:
             all_reasons = ["No policy violations or sensitive content detected"]

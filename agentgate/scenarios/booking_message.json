@@ -35,15 +35,12 @@
       "confidence": 0.88
     },
     {
-      "action_type": "BROWSER_CLICK",
-      "arguments": {
-        "element_id": "2",
-        "payload": "Your payment of $450.00 for booking BK-001 is confirmed. Receipt: https://pay.example.com/checkout/BK-001"
-      },
+      "action_type": "BROWSER_SUBMIT",
+      "arguments": {"element_id": "2"},
       "domain": "booking_style",
       "target_system": "browser",
       "risk_hint": ["external_send", "payment_related"],
-      "rationale": "Click Send Message to deliver the payment confirmation to the customer",
+      "rationale": "Submit the payment confirmation message to the customer",
       "confidence": 0.8
     },
     {
