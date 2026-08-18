@@ -199,6 +199,37 @@ Use a dummy repository and least-privilege permissions. The token remains inside
 GitHub transport and is redacted from errors, results, observations, and CLI output.
 Normal tests use mocked HTTP and never contact GitHub.
 
+### Gmail
+
+Implemented tools:
+
+- `gmail_search` — read-only message search
+- `gmail_archive` — removes the INBOX label; reversible, one batched request
+- `gmail_send` — irreversible external send
+
+Configuration:
+
+```bash
+export GOOGLE_CLIENT_ID=your_oauth_client_id
+export GOOGLE_CLIENT_SECRET=your_oauth_client_secret
+export GOOGLE_SCOPES=https://www.googleapis.com/auth/gmail.modify
+export GOOGLE_TOKEN_FILE=token.json
+```
+
+Authorize once through the loopback consent flow:
+
+```bash
+python3 -m agentgate google-auth
+```
+
+The flow verifies the OAuth `state` parameter and writes `token.json` with mode
+`0600`; the file is gitignored. Access tokens refresh automatically and are redacted
+from every summary, error, and returned field. Use a test Google account.
+
+`gmail_send` declares `to`, `subject`, `body`, `cc`, and `bcc` as content fields, so
+outbound mail is scanned by the detectors and can be sanitized before it leaves. CR/LF
+in a header or recipient is rejected, which blocks MIME header injection.
+
 ### Local Filesystem
 
 Only `FILE_READ` is implemented.
@@ -244,15 +275,17 @@ use generated names in the configured artifact directory.
 
 ## Pending Team Integrations
 
-These connectors are intentionally not implemented on this branch:
+These connectors are deliberately not implemented yet — the PRD schedules them after
+Sprint 1B:
 
-- Gmail
 - Google Calendar
 - Telegram
+- Stripe Sandbox
 
 Provider metadata and executors register independently, so future connector branches
 can add modules without rewriting `AgentLoop` or `DecisionRouter`. Real API execution
-is rejected when trusted tool metadata is absent.
+is rejected when trusted tool metadata is absent, so an unimplemented tool cannot run
+unguarded — it fails closed instead.
 
 ## Testing
 

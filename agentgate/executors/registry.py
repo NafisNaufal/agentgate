@@ -101,9 +101,10 @@ class ExecutorRegistry:
 
 def build_default_executor_registry() -> ExecutorRegistry:
     """Build the MVP registry without importing Playwright itself."""
-    from ..tool_specs import GITHUB_TOOL_SPECS
+    from ..tool_specs import GITHUB_TOOL_SPECS, GMAIL_TOOL_SPECS
     from .filesystem import FileSystemExecutor
     from .github import GitHubExecutor
+    from .gmail import GmailExecutor
     from .playwright import BROWSER_ACTIONS, PlaywrightExecutor
 
     registry = ExecutorRegistry()
@@ -113,6 +114,9 @@ def build_default_executor_registry() -> ExecutorRegistry:
     registry.register_action("FILE_READ", filesystem)
     for spec in GITHUB_TOOL_SPECS:
         registry.register_tool(spec.name, github)
+    gmail = GmailExecutor()
+    for spec in GMAIL_TOOL_SPECS:
+        registry.register_tool(spec.name, gmail)
     for action_type in BROWSER_ACTIONS:
         registry.register_action(action_type, browser)
     return registry

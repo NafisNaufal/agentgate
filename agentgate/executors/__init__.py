@@ -3,6 +3,7 @@
 from .base import ExecutionResult, Executor
 from .filesystem import FileSystemExecutor
 from .github import GitHubExecutor
+from .gmail import GmailExecutor
 from .playwright import PlaywrightExecutor
 from .registry import ExecutorRegistry, build_default_executor_registry
 
@@ -12,6 +13,7 @@ __all__ = [
     "ExecutorRegistry",
     "FileSystemExecutor",
     "GitHubExecutor",
+    "GmailExecutor",
     "PlaywrightExecutor",
     "build_default_executor_registry",
 ]

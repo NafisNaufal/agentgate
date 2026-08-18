@@ -224,7 +224,11 @@ class TestToolRegistryDefinition(unittest.TestCase):
     def test_lookup(self):
         reg = ToolRegistry()
         self.assertTrue(reg.is_registered("github_read_repo"))
-        self.assertFalse(reg.is_registered("gmail_send"))
+        self.assertTrue(reg.is_registered("gmail_send"))
+        # Calendar and Telegram are post-Sprint-1B connectors: deliberately absent, so
+        # the loop refuses to execute them rather than running them unguarded.
+        self.assertFalse(reg.is_registered("calendar_create_event"))
+        self.assertFalse(reg.is_registered("telegram_send_message"))
         self.assertFalse(reg.is_registered("made_up_tool"))
 
     def test_register_new_tool(self):

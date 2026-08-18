@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from .tool_specs import GITHUB_TOOL_SPECS, ToolSpec
+from .tool_specs import ALL_TOOL_SPECS, ToolSpec
 
 
-_DEFAULT_TOOLS = GITHUB_TOOL_SPECS
+_DEFAULT_TOOLS = ALL_TOOL_SPECS
 
 
 class ToolRegistry:

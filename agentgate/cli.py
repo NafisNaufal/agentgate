@@ -5,6 +5,7 @@ Commands:
   tools             list the registered tool catalog
   run <scenario>    run a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
+  google-auth       run the Google OAuth consent flow for the Gmail executor
 
 The guardrail always uses the full local-LLM detector suite via Ollama. The planner
 is a separate layer: it defaults to deterministic scenario replay, and ``run
@@ -196,6 +197,19 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_google_auth(_: argparse.Namespace) -> int:
+    """Run the Gmail consent flow. Never executes an agent action."""
+    from .executors.google_auth import AuthError, run_consent_flow
+
+    try:
+        path = run_consent_flow()
+    except AuthError as exc:
+        print(_c("BLOCK", f"Google authorization failed: {exc}"), file=sys.stderr)
+        return 1
+    print(f"Google token stored at {path} (mode 0600). It is gitignored.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agentgate", description="AgentGate CLI demo (Sprint 1)")
     sub = p.add_subparsers(dest="command", required=True)
@@ -218,6 +232,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="perform ALLOW/SANITIZE actions with real executors (default: dry-run)",
     )
     r.set_defaults(func=cmd_run)
+
+    sub.add_parser(
+        "google-auth", help="run the Google OAuth consent flow for the Gmail executor"
+    ).set_defaults(func=cmd_google_auth)
 
     e = sub.add_parser("eval", help="evaluate a single ad-hoc action")
     e.add_argument("action_type")

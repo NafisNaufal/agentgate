@@ -29,6 +29,8 @@ deliverables are the code itself rather than separate documents.
 | CLI demo + scenario runner | `agentgate/cli.py`, `agentgate/scenarios/` |
 | Audit log (F14) | `agentgate/audit.py` |
 | Independent eval set | `benchmarks/da_eval_runner.py`, `benchmarks/data/` |
+| Gmail connector baseline (DE Sprint 1) | `agentgate/executors/gmail.py`, `tool_specs/google.py` |
+| Connector auth validation (DE Sprint 1B) | `agentgate/executors/google_auth.py` |
 
 All five decision outputs — `ALLOW`, `BLOCK`, `NEED_APPROVAL`, `SANITIZE`,
 `ASK_USER` — are exercised by the test suite and by the three pilot scenarios
@@ -44,3 +46,8 @@ Deliberately not built yet, per the PRD milestone table:
   `NEED_APPROVAL` routing decision, which exists; the queue and reviewer workflow are
   FE/DE surfaces.
 - MCP, LangGraph, OpenClaw, and browser-extension adapters — post-MVP by PRD decision.
+- Google Calendar, Telegram, and Stripe Sandbox connectors. The PRD first names these
+  in Sprint 3 ("Stabilize Gmail/Calendar/GitHub/Stripe/Telegram/local file tools"), so
+  only Gmail — the Sprint 1 "Gmail/GitHub/local file connector baseline" — is
+  implemented. `ToolRegistry` has no entry for the others, and the loop refuses to
+  execute an unregistered tool, so they fail closed rather than running unguarded.
