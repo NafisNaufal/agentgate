@@ -22,7 +22,8 @@ The enforcement rules are:
 | `ASK_USER` | Never execute; return `ask_user` |
 
 Real execution is always opt-in. Running a scenario without `--execute` is a safe
-guardrail-only dry run.
+guardrail-only dry run. Every decision, in either mode, is written to the audit log
+before it is returned.
 
 ## 1. Prerequisites
 
@@ -30,6 +31,7 @@ You need:
 
 - Python 3.10 or newer
 - Git
+- Postgres, for the mandatory audit log
 - Ollama with the configured detector model
 - A GitHub token only if you intend to execute GitHub actions
 - Playwright and Chromium only if you intend to execute browser actions
@@ -85,6 +87,7 @@ load `.env` files. `.env.example` contains placeholders for all executor setting
 ### macOS and Linux
 
 ```bash
+export AGENTGATE_AUDIT_DSN=postgresql://agentgate:agentgate@localhost:5432/agentgate
 export OLLAMA_HOST=http://localhost:11434
 export AGENTGATE_LLM_DETECTOR_MODEL=qwen2.5:7b
 export AGENTGATE_LLM_DETECTOR_TIMEOUT=30
@@ -100,6 +103,7 @@ export AGENTGATE_SCREENSHOT_DIR=./artifacts/screenshots
 ### Windows PowerShell
 
 ```powershell
+$env:AGENTGATE_AUDIT_DSN = "postgresql://agentgate:agentgate@localhost:5432/agentgate"
 $env:OLLAMA_HOST = "http://localhost:11434"
 $env:AGENTGATE_LLM_DETECTOR_MODEL = "qwen2.5:7b"
 $env:AGENTGATE_LLM_DETECTOR_TIMEOUT = "30"
@@ -114,6 +118,17 @@ $env:AGENTGATE_SCREENSHOT_DIR = ".\artifacts\screenshots"
 
 Leave `GITHUB_TOKEN` empty until the GitHub tutorial. Never place a real token in a
 scenario, source file, CLI argument, or planner prompt.
+
+`AGENTGATE_AUDIT_DSN` is required. Auditing is mandatory, so AgentGate refuses to
+start when the DSN is unset or the database is unreachable, rather than producing
+decisions that were never recorded. Create the database once:
+
+```bash
+createdb agentgate
+```
+
+The `agentgate_audit` table and its indexes are created automatically on first
+connect.
 
 Start Ollama in one terminal:
 
@@ -674,6 +689,18 @@ specific Contents, Issues, or Gist permission required by the selected tool.
 
 Use a relative path beneath `AGENTGATE_SANDBOX_ROOT`. Do not use `..`, absolute
 paths, drive-qualified paths, or links to files outside the sandbox.
+
+### `AGENTGATE_AUDIT_DSN is not set`
+
+Auditing is mandatory (PRD F14). Export the DSN and make sure Postgres is running:
+
+```bash
+export AGENTGATE_AUDIT_DSN=postgresql://agentgate:agentgate@localhost:5432/agentgate
+pg_isready
+```
+
+A `Cannot reach the audit database` error means the DSN is set but Postgres is down,
+unreachable, or the database does not exist. The error never prints the password.
 
 ### `awaiting_approval`
 
