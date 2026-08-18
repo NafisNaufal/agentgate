@@ -21,6 +21,20 @@ from agentgate.loop import AgentLoop
 from agentgate.planner import ReplayPlanner
 from agentgate.router import DecisionRouter
 from agentgate.schemas import ActionRequest, Decision, SensitiveEntity
+from tests.fake_audit import audit_patch
+
+_AUDIT = None
+
+
+def setUpModule():
+    """Auditing is mandatory in production; unit tests use an in-memory store."""
+    global _AUDIT
+    _AUDIT = audit_patch()
+    _AUDIT.start()
+
+
+def tearDownModule():
+    _AUDIT.stop()
 
 
 class FakeResponse:

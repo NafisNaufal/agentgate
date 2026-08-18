@@ -18,6 +18,7 @@ playwright-report/
 test-results/
 .browser-data/
 *.storage-state.json
+token.json
 
 # Confidential company documents — kept local, never pushed
 docs/*.pdf

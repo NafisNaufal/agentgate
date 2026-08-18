@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from agentgate.audit import AuditUnavailable  # noqa: E402
 from agentgate.decision import DecisionEngine  # noqa: E402
 from agentgate.schemas import ActionRequest  # noqa: E402
 
@@ -43,7 +44,11 @@ def main() -> int:
             print(", ".join(c["id"] for c in data["cases"]))
             return 1
 
-    engine = DecisionEngine()
+    try:
+        engine = DecisionEngine()
+    except AuditUnavailable as exc:
+        print(f"Audit store unavailable: {exc}")
+        return 1
 
     # Single-case runs get the full picture (instruction + request + reasons) up front,
     # not just a table row - that's the point of running one at a time.

@@ -32,8 +32,22 @@ from agentgate.sanitizer import sanitize
 from agentgate.schemas import ActionRequest, Decision, RiskLevel
 from agentgate.tools import ToolRegistry, ToolSpec
 from tests.fake_llm import fake_chat_json
+from tests.fake_audit import audit_patch
 
 SCENARIO_DIR = Path(__file__).resolve().parent.parent / "agentgate" / "scenarios"
+
+_AUDIT = None
+
+
+def setUpModule():
+    """Auditing is mandatory in production; unit tests use an in-memory store."""
+    global _AUDIT
+    _AUDIT = audit_patch()
+    _AUDIT.start()
+
+
+def tearDownModule():
+    _AUDIT.stop()
 
 
 def AR(**kw) -> ActionRequest:

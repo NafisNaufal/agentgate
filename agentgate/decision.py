@@ -8,7 +8,10 @@ happen".
 
 from __future__ import annotations
 
+from typing import Any
+
 from . import risk
+from .audit import STAGE_ACTION, build_audit_store
 from .detectors import Detector, get_default_detectors
 from .detectors.llm_client import LLMUnavailable
 from .policy import PolicyContext, PolicyEngine
@@ -55,11 +58,15 @@ class DecisionEngine:
         self,
         detectors: list[Detector] | None = None,
         policy_engine: PolicyEngine | None = None,
+        audit_store: Any | None = None,
     ):
         self.detectors = detectors if detectors is not None else get_default_detectors()
         self.policy_engine = policy_engine if policy_engine is not None else PolicyEngine()
+        # Auditing is mandatory (PRD F14). An unset or unreachable DSN raises here, at
+        # construction, rather than letting unaudited decisions through at evaluate().
+        self.audit_store = audit_store if audit_store is not None else build_audit_store()
 
-    def evaluate(self, req: ActionRequest) -> DecisionResponse:
+    def evaluate(self, req: ActionRequest, stage: str = STAGE_ACTION) -> DecisionResponse:
         # 1. Detection
         entities = []
         reasons: list[str] = []
@@ -140,7 +147,7 @@ class DecisionEngine:
         if not all_reasons:
             all_reasons = ["No policy violations or sensitive content detected"]
 
-        return DecisionResponse(
+        response = DecisionResponse(
             decision=decision,
             risk_level=level,
             risk_score=score,
@@ -149,5 +156,8 @@ class DecisionEngine:
             sensitive_entities=entities,
             sanitized_payload=sanitized_payload,
             next_step=_NEXT_STEP[decision],
-            audit_id="",  # filled by the audit logger
         )
+        # Stamps response.audit_id in place. A failed write raises AuditUnavailable:
+        # an unauditable decision must not be returned as if it had been recorded.
+        self.audit_store.record(req, response, stage)
+        return response

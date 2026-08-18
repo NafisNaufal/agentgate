@@ -4,12 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentgate"
-version = "0.2.0"
+version = "0.3.0"
 description = "A pre-action guardrail for AI agent tool calls."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = []   # core engine is pure stdlib; runs with no third-party packages
+dependencies = [
+    # Audit logging is mandatory (PRD F14), and it is backed by Postgres.
+    # Everything else in the engine is stdlib-only.
+    "psycopg[binary]>=3.1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]

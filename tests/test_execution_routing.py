@@ -15,6 +15,20 @@ from agentgate.schemas import ActionRequest, Decision, DecisionResponse, RiskLev
 from agentgate.tools import ToolRegistry
 from agentgate.tools import ToolSpec
 from tests.fake_llm import fake_chat_json
+from tests.fake_audit import FakeAuditStore, audit_patch
+
+_AUDIT = None
+
+
+def setUpModule():
+    """Auditing is mandatory in production; unit tests use an in-memory store."""
+    global _AUDIT
+    _AUDIT = audit_patch()
+    _AUDIT.start()
+
+
+def tearDownModule():
+    _AUDIT.stop()
 
 
 class RecordingExecutor:
@@ -305,7 +319,9 @@ class TestLoopExecutionOrdering(unittest.TestCase):
         events: list[str] = []
 
         class OrderedDecider:
-            def evaluate(self, request: ActionRequest) -> DecisionResponse:
+            audit_store = FakeAuditStore()
+
+            def evaluate(self, request: ActionRequest, stage: str = "action") -> DecisionResponse:
                 events.append("guardrail")
                 return response(Decision.ALLOW)
 
@@ -326,6 +342,51 @@ class TestLoopExecutionOrdering(unittest.TestCase):
         self.assertEqual(events.count("executor"), 1)
         self.assertLess(events.index("guardrail"), events.index("executor"))
         self.assertEqual(executor.calls[0][1]["path"], "public/readme.txt")
+
+    def test_audit_record_is_closed_out_with_the_enforcement_outcome(self):
+        # The decision is audited at evaluate() time, when the outcome is not yet
+        # known; PRD F14 wants the execution status too, so the loop must go back
+        # and update the same record once the router has enforced.
+        registry = ExecutorRegistry()
+        registry.register_action("FILE_READ", RecordingExecutor())
+        loop = AgentLoop(
+            ReplayPlanner([{"action_type": "FILE_READ", "arguments": {"path": "public/readme.txt"}}]),
+            DecisionRouter(registry, execute=True),
+        )
+        loop.run("read a sandbox file")
+        actions = loop.decider.audit_store.actions()
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]["request"]["action_type"], "FILE_READ")
+        self.assertEqual(actions[0]["execution_status"], "executed")
+        self.assertIsNotNone(actions[0]["execution_result"])
+        self.assertEqual(loop.decider.audit_store.completeness(), 1.0)
+
+    def test_blocked_step_is_audited_as_blocked(self):
+        token = "ghp_" + "a" * 36
+        registry = ExecutorRegistry()
+        executor = RecordingExecutor()
+        registry.register_tool("github_create_issue_comment", executor)
+        loop = AgentLoop(
+            ReplayPlanner(
+                [
+                    {
+                        "action_type": "API_CALL",
+                        "arguments": {
+                            "tool_name": "github_create_issue_comment",
+                            "owner": "octo",
+                            "repo": "demo",
+                            "issue_number": 1,
+                            "body": f"token {token}",
+                        },
+                    }
+                ]
+            ),
+            DecisionRouter(registry, execute=True),
+        )
+        loop.run("post a comment")
+        statuses = [r["execution_status"] for r in loop.decider.audit_store.actions()]
+        self.assertEqual(statuses, ["blocked"])
+        self.assertEqual(executor.calls, [])
 
     def test_run_serialization_redacts_original_blocked_arguments(self):
         token = "ghp_" + "a" * 36
