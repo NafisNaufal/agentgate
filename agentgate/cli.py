@@ -3,11 +3,12 @@
 Commands:
   list              list available scenarios
   tools             list the registered tool catalog
-  run <scenario>    replay a scenario through the full decision engine
+  run <scenario>    run a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
 
 The guardrail always uses the full local-LLM detector suite via Ollama. The planner
-is a separate layer and defaults to deterministic scenario replay.
+is a separate layer: it defaults to deterministic scenario replay, and ``run
+--planner llm`` swaps in a live remote LLM planner without changing the guardrail.
 """
 
 from __future__ import annotations
@@ -19,11 +20,12 @@ from importlib.resources import files
 from typing import Any
 
 from .action_space import ACTION_TYPES
+from .audit import AuditUnavailable
 from .decision import DecisionEngine
 from .executors import build_default_executor_registry
 from .executors.base import safe_value
 from .loop import AgentLoop, RunResult
-from .planner import ReplayPlanner
+from .planner import ReplayPlanner, get_planner
 from .router import DecisionRouter
 from .sanitizer import sanitize
 from .schemas import ActionRequest
@@ -108,9 +110,28 @@ def cmd_tools(_: argparse.Namespace) -> int:
     return 0
 
 
+def _build_planner(scenario: dict, kind: str):
+    """Replay the recorded steps, or let a real LLM plan the same task from scratch.
+
+    The guardrail is planner-agnostic by design (PRD F2: "the model suggests,
+    AgentGate validates"), so the same scenario task can be driven either way and
+    must produce the same class of decisions.
+    """
+    if kind == "replay":
+        return ReplayPlanner(scenario["steps"])
+    try:
+        return get_planner("llm")
+    except (RuntimeError, ValueError) as exc:
+        raise SystemExit(
+            f"LLM planner unavailable: {exc}\n"
+            "Set AGENTGATE_LLM_PROVIDER and AGENTGATE_LLM_API_KEY, or use "
+            "--planner replay (the default)."
+        ) from exc
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     scenario = _load_scenario(args.scenario)
-    planner = ReplayPlanner(scenario["steps"])
+    planner = _build_planner(scenario, args.planner)
     decider = DecisionEngine()
     execute = getattr(args, "execute", False)
     executors = build_default_executor_registry() if execute else None
@@ -186,6 +207,12 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("scenario")
     r.add_argument("--json", action="store_true")
     r.add_argument(
+        "--planner",
+        choices=("replay", "llm"),
+        default="replay",
+        help="replay the scenario's recorded steps (default), or plan live with an LLM",
+    )
+    r.add_argument(
         "--execute",
         action="store_true",
         help="perform ALLOW/SANITIZE actions with real executors (default: dry-run)",
@@ -210,7 +237,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except AuditUnavailable as exc:
+        # Auditing is mandatory, so this is a hard stop - but the operator needs a
+        # fix, not a traceback.
+        print(_c("BLOCK", f"Audit store unavailable: {exc}"), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
