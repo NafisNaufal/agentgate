@@ -31,10 +31,6 @@ class ExecutionResult:
             "error": sanitize(self.error)[:_OBSERVATION_TEXT_LIMIT] if self.error else None,
         }
 
-    def to_observation(self) -> dict[str, Any]:
-        """Return the planner-safe form of this result."""
-        return self.to_dict()
-
 
 class Executor(Protocol):
     """Executor interface used by the dispatcher."""

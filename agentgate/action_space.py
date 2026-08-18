@@ -57,18 +57,3 @@ def validate_proposal(action_type: str, arguments: dict | None = None) -> None:
 def is_terminal(action_type: str) -> bool:
     """DONE / FAIL end the agent loop."""
     return action_type in {"DONE", "FAIL"}
-
-
-def is_executable(req: ActionRequest) -> bool:
-    """Whether this action would actually touch an external system if allowed."""
-    return req.action_type in {
-        "API_CALL",
-        "BROWSER_OPEN",
-        "BROWSER_SNAPSHOT",
-        "BROWSER_CLICK",
-        "BROWSER_TYPE",
-        "BROWSER_SELECT",
-        "BROWSER_SUBMIT",
-        "BROWSER_SCREENSHOT",
-        "FILE_READ",
-    }

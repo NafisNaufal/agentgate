@@ -11,7 +11,6 @@ Kept as plain dataclasses (stdlib only) so the engine runs with no third-party d
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any
@@ -52,17 +51,6 @@ ACTION_TYPES = {
     "DONE",
     "FAIL",
 }
-
-# Risk hints the planner / detectors may attach (PRD ActionRequest.risk_hint).
-RISK_HINTS = {
-    "external_send",
-    "payment_related",
-    "source_code",
-    "bulk_action",
-    "destructive_action",
-    "form_submit",
-}
-
 
 @dataclass
 class ActionRequest:
@@ -182,6 +170,3 @@ class DecisionResponse:
         d["decision"] = self.decision.value
         d["risk_level"] = self.risk_level.value
         return d
-
-    def to_json(self, indent: int | None = 2) -> str:
-        return json.dumps(self.to_dict(), indent=indent)

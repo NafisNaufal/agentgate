@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .action_space import ActionSpaceError, is_terminal
+from .audit import (
+    STAGE_OBSERVATION_SCREEN,
+    STAGE_TASK_SCREEN,
+    STAGE_TERMINAL_SCREEN,
+)
 from .decision import DecisionEngine
 from .executors.base import ExecutionResult, safe_value
 from .planner.base import Planner, Proposal
@@ -105,7 +110,8 @@ class AgentLoop:
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
         task_screen = self.decider.evaluate(
-            ActionRequest(action_type="TASK_CONTEXT", payload_summary=task)
+            ActionRequest(action_type="TASK_CONTEXT", payload_summary=task),
+            STAGE_TASK_SCREEN,
         )
         display_task = (
             task
@@ -138,7 +144,8 @@ class AgentLoop:
                     ActionRequest(
                         action_type=proposal.action_type,
                         payload_summary=str(terminal_message),
-                    )
+                    ),
+                    STAGE_TERMINAL_SCREEN,
                 )
                 if proposal.action_type == "FAIL":
                     result.status = "failed"
@@ -214,6 +221,16 @@ class AgentLoop:
                 outcome = self.router.route(req, decision, execution_arguments)
             else:
                 outcome = self.router.route(req, decision)
+            # Close the audit record for this step: the decision was recorded at
+            # evaluate() time, the enforcement outcome is only known now (PRD F14
+            # requires both the decision and the execution status).
+            self.decider.audit_store.update(
+                decision.audit_id,
+                execution_status=outcome.status,
+                execution_result=(
+                    outcome.execution_result.to_dict() if outcome.execution_result else None
+                ),
+            )
             result.steps.append(StepRecord(i, proposal, req, decision, outcome, eval_ms=eval_ms))
 
             observation = {"last_outcome": outcome.status, "last_decision": decision.decision.value}
@@ -241,7 +258,7 @@ class AgentLoop:
         request: ActionRequest,
         execution_result: ExecutionResult,
     ) -> dict[str, Any]:
-        safe_result = execution_result.to_observation()
+        safe_result = execution_result.to_dict()
         serialized = json.dumps(safe_result, ensure_ascii=True)
         observation_request = ActionRequest(
             action_type=request.action_type,
@@ -256,7 +273,7 @@ class AgentLoop:
             rollback_available=request.rollback_available,
             confidence=1.0,
         )
-        decision = self.decider.evaluate(observation_request)
+        decision = self.decider.evaluate(observation_request, STAGE_OBSERVATION_SCREEN)
         if decision.decision == Decision.ALLOW:
             execution_result.summary = safe_result["summary"]
             execution_result.data = safe_result["data"]

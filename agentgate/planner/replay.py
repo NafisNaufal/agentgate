@@ -19,10 +19,6 @@ class ReplayPlanner(Planner):
     def exhausted(self) -> bool:
         return self._i >= len(self._steps)
 
-    def load(self, steps: list[dict]) -> None:
-        self._steps = list(steps)
-        self._i = 0
-
     def propose(self, task: str, observation: dict | None = None) -> Proposal:
         if self.exhausted:
             return Proposal(action_type="DONE", arguments={}, rationale="No more steps")
