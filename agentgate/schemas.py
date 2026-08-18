@@ -110,24 +110,50 @@ class ActionRequest:
     def scan_text(self) -> str:
         """All free text a detector should inspect, de-duplicated.
 
+        Includes ``target`` (element id, path, URL, or tool name) because several
+        detectors legitimately reason about *where* an action points - the secret
+        detector wants to see a ``.env`` path, the payment detector a checkout URL.
+        Classifiers that read their input purely as prose should use
+        ``content_text`` instead.
+        """
+        return self._joined(
+            self.raw_payload, self.payload_summary, self.content_context, self.target
+        )
+
+    @property
+    def content_text(self) -> str:
+        """Free text that is actual content, excluding structural metadata.
+
+        Same as ``scan_text`` minus ``target``. A bare identifier appended as a
+        trailing line is not content, and feeding it to a prompt-injection
+        classifier reliably destabilizes the verdict: measured against live
+        qwen2.5:7b and 3b, a benign booking message classified "benign" on its own
+        flipped to "injection" at confidence 1.00 as soon as any target value
+        ("1", "2", "send-button") was appended. Empty target stayed benign. That
+        turned an expected SANITIZE into a BLOCK on a demo scenario.
+        """
+        return self._joined(self.raw_payload, self.payload_summary, self.content_context)
+
+    def _joined(self, *parts: str) -> str:
+        """Join non-empty parts, de-duplicated on whitespace-normalized content.
+
         raw_payload and payload_summary are often the same content in different
         forms (payload_summary whitespace-flattens raw_payload for multi-line
         text), so exact-string dedup misses them and the same content gets
-        included twice - which double-counts regex entities and, worse, makes
-        genuinely benign text look like it's been duplicated/obfuscated to an
-        LLM classifier. Dedup on whitespace-normalized content instead.
+        included twice - which, worse than being redundant, makes genuinely benign
+        text look deliberately duplicated or obfuscated to an LLM classifier.
         """
         seen: set[str] = set()
-        parts: list[str] = []
-        for t in (self.raw_payload, self.payload_summary, self.content_context, self.target):
-            if not t:
+        kept: list[str] = []
+        for text in parts:
+            if not text:
                 continue
-            normalized = " ".join(t.split())
+            normalized = " ".join(text.split())
             if normalized in seen:
                 continue
             seen.add(normalized)
-            parts.append(t)
-        return "\n".join(parts)
+            kept.append(text)
+        return "\n".join(kept)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ActionRequest":

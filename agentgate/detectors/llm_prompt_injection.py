@@ -42,7 +42,9 @@ class LLMPromptInjectionDetector(Detector):
         self.extra_options = extra_options
 
     def scan(self, req: ActionRequest) -> Finding:
-        text = req.scan_text
+        # content_text, not scan_text: this classifier reads its input as prose, and a
+        # bare target id appended as a trailing line flips benign text to "injection".
+        text = req.content_text
         if not text:
             return self._finding()
         data = llm_client.chat_json(
