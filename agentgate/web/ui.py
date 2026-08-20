@@ -102,6 +102,21 @@ PAGE = r"""<!doctype html>
     </section>
 
     <section class="panel">
+      <h2>DA evaluation</h2>
+      <div class="row">
+        <button id="runEval" onclick="runEval()">Run all cases</button>
+        <input id="evalOnly" placeholder="or filter by id, e.g. DATA" style="max-width:16rem">
+        <span id="evalHint" class="dim"></span>
+      </div>
+      <p class="dim" style="margin:.5rem 0 0">
+        DA's independently-authored cases, replayed through the live engine. Disagreements
+        are reported as mismatches, not reconciled — that is the point of test data the
+        detector authors did not write.
+      </p>
+      <div id="evalOut" class="scroll" style="margin-top:.8rem"></div>
+    </section>
+
+    <section class="panel">
       <h2>Decisions <span id="jobMeta" class="dim" style="text-transform:none;letter-spacing:0"></span></h2>
       <div id="steps" class="dim">No run yet.</div>
     </section>
@@ -171,7 +186,14 @@ async function loadStatus() {
      <div style="margin-top:.6rem">${counts}</div>`;
   $("chatHint").textContent = s.planner_available ? "" : "Set AGENTGATE_LLM_API_KEY to enable free-text tasks.";
   $("runChat").disabled = !s.planner_available;
+  $("evalHint").textContent = s.eval_cases ? `${s.eval_cases} cases · ~400s each on this box` : "eval set not found";
   renderGmail(s);
+  // A reload must not orphan a run that is still going server-side.
+  if (s.active_job && s.active_job !== currentJob) {
+    currentJob = s.active_job;
+    $("runScenario").disabled = $("runEval").disabled = true;
+    poll();
+  }
 }
 
 function renderGmail(s) {
@@ -217,6 +239,50 @@ function hintScenario() {
   $("scenarioHint").textContent = s ? `${s.steps} steps · expected: ${s.expected}` : "";
 }
 
+async function runEval() {
+  const only = $("evalOnly").value.trim();
+  $("runEval").disabled = true;
+  $("evalOut").innerHTML = '<span class="dim">starting…</span>';
+  try {
+    const r = await api("/api/eval", {method: "POST", body: JSON.stringify({only})});
+    currentJob = r.job.id; poll();
+  } catch (e) {
+    $("evalOut").innerHTML = `<div class="note err">${esc(e.message)}</div>`;
+    $("runEval").disabled = false;
+  }
+}
+
+function renderEval(job) {
+  const rows = job.steps;
+  const done = rows.length, total = job.total || 0;
+  const matched = rows.filter(r => r.match).length;
+  const pct = total ? Math.round(done / total * 100) : 0;
+  const head = job.status === "running"
+    ? `case ${done}/${total} (${pct}%) · ${matched}/${done} matching · ${Math.round(job.elapsed)}s elapsed`
+    : `${matched}/${done} match the expected decision · ${Math.round(job.elapsed)}s`;
+  if (!done) {
+    $("evalOut").innerHTML = `<span class="dim">evaluating case 1/${total}… roughly 400s each without a GPU.</span>`;
+    return;
+  }
+  const body = rows.map(r => `<tr>
+    <td><code>${esc(r.id)}</code></td>
+    <td>${esc(r.title)}</td>
+    <td><span class="tag ${esc(r.expected)}">${esc(r.expected)}</span></td>
+    <td><span class="tag ${esc(r.actual)}">${esc(r.actual)}</span></td>
+    <td class="dim">${esc(r.expected_risk)} → ${esc(r.actual_risk)}</td>
+    <td>${r.match ? '<span class="dim">match</span>' : '<b style="color:var(--block)">MISMATCH</b>'}</td>
+  </tr>`).join("");
+  const misses = rows.filter(r => !r.match).map(r => `<div class="step">
+    <div class="row"><code>${esc(r.id)}</code> <span class="dim">${esc(r.title)}</span></div>
+    <div class="dim">expected ${esc(r.expected)} (${esc(r.expected_risk)}), got ${esc(r.actual)} (${esc(r.actual_risk)})</div>
+    <ul>${r.reasons.map(x => `<li>${esc(x)}</li>`).join("")}</ul>
+    ${r.triggered_policies.length ? `<div class="dim">policies: ${esc(r.triggered_policies.join(", "))}</div>` : ""}
+  </div>`).join("");
+  $("evalOut").innerHTML = `<div class="dim" style="margin-bottom:.5rem">${head}</div>
+    <table><tr><th>ID</th><th>Case</th><th>Expected</th><th>Actual</th><th>Risk</th><th></th></tr>${body}</table>
+    ${misses ? `<h2 style="margin-top:1rem">Mismatch detail</h2>${misses}` : ""}`;
+}
+
 async function runScenario() { await startRun({scenario: $("scenario").value}); }
 async function runChat() {
   const task = $("task").value.trim();
@@ -243,10 +309,10 @@ function poll() {
     if (!currentJob) return;
     try {
       const job = await api("/api/jobs/" + currentJob);
-      renderJob(job);
+      if (job.kind === "eval") renderEval(job); else renderJob(job);
       if (job.status === "running" || job.status === "queued") { poll(); }
       else {
-        $("runScenario").disabled = false;
+        $("runScenario").disabled = false; $("runEval").disabled = false;
         loadStatus(); loadApprovals(); loadAudit();
       }
     } catch (e) { $("steps").innerHTML = `<div class="note err">${esc(e.message)}</div>`; }

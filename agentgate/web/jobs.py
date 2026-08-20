@@ -27,6 +27,7 @@ class Job:
     label: str
     kind: str  # "scenario" | "chat"
     status: str = "queued"  # queued | running | done | error
+    total: int = 0  # expected number of rows, when known up front (eval)
     started_at: float = field(default_factory=time.time)
     finished_at: float | None = None
     steps: list[dict[str, Any]] = field(default_factory=list)
@@ -43,6 +44,7 @@ class Job:
             "started_at": self.started_at,
             "elapsed": round((self.finished_at or time.time()) - self.started_at, 1),
             "steps": self.steps,
+            "total": self.total,
             "result_status": self.result_status,
             "final_message": self.final_message,
             "error": self.error,
@@ -92,34 +94,53 @@ class JobManager:
         with self._lock:
             return [self._jobs[j].to_dict() for j in reversed(self._order) if j in self._jobs]
 
+    def active(self) -> Job | None:
+        """The job currently queued or running, if any.
+
+        The console polls this on load: a browser reload must not orphan a run that is
+        still going server-side, which is exactly what happens when the only handle on
+        it is a variable in the page.
+        """
+        with self._lock:
+            for job_id in reversed(self._order):
+                job = self._jobs.get(job_id)
+                if job and job.status in {"queued", "running"}:
+                    return job
+        return None
+
     def submit(
         self,
         label: str,
         kind: str,
-        build_loop: Callable[[Callable[[StepRecord], None]], tuple[AgentLoop, str]],
+        work: Callable[[Callable[[dict[str, Any]], None]], tuple[str, str]],
     ) -> Job:
-        """Queue a run. ``build_loop`` returns (loop, task) given an on_step callback."""
+        """Queue a unit of work.
+
+        ``work`` receives an ``emit`` callback for incremental rows and returns
+        (result_status, final_message). Generic rather than loop-specific so the DA
+        evaluation, which is a sequence of evaluate() calls rather than an agent run,
+        uses the same queue, run lock and polling contract.
+        """
         job = Job(id="job_" + uuid.uuid4().hex[:10], label=label, kind=kind)
         with self._lock:
             self._jobs[job.id] = job
             self._order.append(job.id)
             while len(self._order) > self._max_history:
                 self._jobs.pop(self._order.pop(0), None)
-        threading.Thread(target=self._run, args=(job, build_loop), daemon=True).start()
+        threading.Thread(target=self._run, args=(job, work), daemon=True).start()
         return job
 
     def _run(
         self,
         job: Job,
-        build_loop: Callable[[Callable[[StepRecord], None]], tuple[AgentLoop, str]],
+        work: Callable[[Callable[[dict[str, Any]], None]], tuple[str, str]],
     ) -> None:
         with self._run_lock:
             job.status = "running"
             try:
-                loop, task = build_loop(lambda step: job.steps.append(step_to_dict(step)))
-                result = loop.run(task)
-                job.result_status = result.status
-                job.final_message = safe_value(result.final_message)
+                status, message = work(job.steps.append)
+                job.result_status = status
+                job.final_message = safe_value(message)
                 job.status = "done"
             except Exception as exc:
                 # Surface the type and message, never a traceback: the console is

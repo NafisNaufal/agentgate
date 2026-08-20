@@ -101,10 +101,10 @@ class TestJobManager(unittest.TestCase):
     def test_job_failure_is_captured_without_a_traceback(self):
         manager = JobManager()
 
-        def build(_on_step):
+        def work(_emit):
             raise RuntimeError("planner exploded")
 
-        job = manager.submit("boom", "scenario", build)
+        job = manager.submit("boom", "scenario", work)
         _wait(manager, job.id)
         finished = manager.get(job.id)
         self.assertEqual(finished.status, "error")
@@ -119,17 +119,63 @@ class TestJobManager(unittest.TestCase):
         self.assertLessEqual(len(manager.recent()), 3)
 
 
-class _FakeLoop:
-    def run(self, task):
-        class R:
-            status = "dry_run_complete"
-            final_message = "done"
+class TestActiveJobSurvivesReload(unittest.TestCase):
+    """A browser reload must not orphan a run that is still going server-side.
 
-        return R()
+    The console previously held the job id only in a page variable, so refreshing
+    during a multi-minute run left it running with nobody watching.
+    """
+
+    def test_active_reports_the_running_job(self):
+        import threading
+
+        manager = JobManager()
+        release = threading.Event()
+
+        def slow(_emit):
+            release.wait(timeout=5)
+            return "done", "finished"
+
+        job = manager.submit("slow", "scenario", slow)
+        for _ in range(500):
+            if manager.active() is not None:
+                break
+            import time as _t
+
+            _t.sleep(0.01)
+        active = manager.active()
+        self.assertIsNotNone(active)
+        self.assertEqual(active.id, job.id)
+        release.set()
+        _wait(manager, job.id)
+        self.assertIsNone(manager.active())
+
+    def test_no_active_job_when_idle(self):
+        self.assertIsNone(JobManager().active())
 
 
-def _immediate(_on_step):
-    return _FakeLoop(), "task"
+class TestEvalJobShape(unittest.TestCase):
+    def test_rows_stream_as_they_complete(self):
+        manager = JobManager()
+
+        def work(emit):
+            for n in range(3):
+                emit({"id": f"CASE-{n}", "match": n != 1})
+            return "eval_complete", "2/3 cases match the expected decision"
+
+        job = manager.submit("eval", "eval", work)
+        job.total = 3
+        _wait(manager, job.id)
+        finished = manager.get(job.id).to_dict()
+        self.assertEqual(finished["kind"], "eval")
+        self.assertEqual(finished["total"], 3)
+        self.assertEqual(len(finished["steps"]), 3)
+        self.assertEqual(sum(1 for r in finished["steps"] if r["match"]), 2)
+        self.assertIn("2/3", finished["final_message"])
+
+
+def _immediate(_emit):
+    return "done", "finished"
 
 
 def _wait(manager: JobManager, job_id: str, timeout: float = 5.0) -> None:

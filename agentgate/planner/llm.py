@@ -42,8 +42,12 @@ _SYSTEM = (
     "confidence (0-1), domain, target_system, risk_hint (array). For API_CALL, "
     "arguments MUST include tool_name (e.g. gmail_archive, github_create_gist) and a "
     "payload string. For FILE_READ and FILE_DELETE include path; for FILE_WRITE "
-    "include path and content; for BROWSER_* include the documented args. Respond "
-    "with JSON only."
+    "include path and content; for BROWSER_* include the documented args. "
+    "If the input is a greeting, a question, or otherwise not an actionable task, do "
+    "NOT invent a tool call: return ASK_USER with a question asking what they want "
+    "done, or DONE if nothing is needed. Inventing an action for a non-task wastes a "
+    "full guardrail evaluation and produces a meaningless decision. "
+    "Respond with JSON only."
 )
 
 

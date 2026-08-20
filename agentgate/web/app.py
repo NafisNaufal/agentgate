@@ -13,6 +13,7 @@ import json
 import os
 import re
 import traceback
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -24,11 +25,15 @@ from ..executors.google_auth import AuthError
 from ..loop import AgentLoop
 from ..planner import ReplayPlanner, get_planner
 from ..router import DecisionRouter
+from ..executors.base import safe_value
+from ..schemas import ActionRequest
 from ..tools import ToolRegistry
 from .auth import CSRF_HEADER, SESSION_COOKIE, SessionStore, check_password, load_password
-from .jobs import JobManager
+from .jobs import JobManager, step_to_dict
 from .oauth import CALLBACK_PATH, GmailConnection, origin_is_oauth_capable
 from .ui import PAGE
+
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 _MAX_BODY_BYTES = 64_000
 _SCENARIO_NAME = re.compile(r"^[a-z0-9_]{1,64}$")
@@ -174,16 +179,19 @@ class Console:
     def run_scenario(self, name: str):
         scenario = self.load_scenario(name)
 
-        def build(on_step):
+        def work(emit):
             loop = AgentLoop(
                 ReplayPlanner(scenario["steps"]),
                 DecisionRouter(),  # dry-run: the console never executes
                 decider=self.engine,
-                on_step=on_step,
+                on_step=lambda step: emit(step_to_dict(step)),
             )
-            return loop, scenario["task"]
+            result = loop.run(scenario["task"])
+            return result.status, result.final_message
 
-        return self.jobs.submit(scenario.get("title", name), "scenario", build)
+        job = self.jobs.submit(scenario.get("title", name), "scenario", work)
+        job.total = len(scenario["steps"])
+        return job
 
     def run_chat(self, task: str):
         if not self.planner_available():
@@ -192,16 +200,68 @@ class Console:
                 "AGENTGATE_LLM_API_KEY to use free-text tasks, or run a scenario."
             )
 
-        def build(on_step):
+        def work(emit):
             loop = AgentLoop(
                 get_planner("llm"),
                 DecisionRouter(),  # dry-run
                 decider=self.engine,
-                on_step=on_step,
+                on_step=lambda step: emit(step_to_dict(step)),
             )
-            return loop, task
+            result = loop.run(task)
+            return result.status, result.final_message
 
-        return self.jobs.submit(task[:80], "chat", build)
+        return self.jobs.submit(task[:80], "chat", work)
+
+    def eval_cases(self) -> list[dict[str, Any]]:
+        path = ROOT / "benchmarks" / "data" / "da_eval_set.json"
+        if not path.is_file():
+            raise ValueError("DA eval set not found in this checkout")
+        return json.loads(path.read_text())["cases"]
+
+    def run_eval(self, only: str = ""):
+        """Replay DA's independently-authored cases through the live engine.
+
+        Same evaluation path as benchmarks/da_eval_runner.py, so the numbers the team
+        sees here are the numbers the CLI reports. Disagreements are surfaced as
+        mismatches, never reconciled - that is the point of eval data the detector
+        authors did not write.
+        """
+        cases = self.eval_cases()
+        if only:
+            cases = [c for c in cases if only.lower() in c["id"].lower()]
+            if not cases:
+                raise ValueError(f"No eval case id contains {only!r}")
+
+        def work(emit):
+            matched = 0
+            for case in cases:
+                decision = self.engine.evaluate(ActionRequest(**case["action_request"]))
+                ok = decision.decision.value == case["expected_decision"]
+                matched += ok
+                emit(
+                    {
+                        "id": case["id"],
+                        "title": case["title"],
+                        "instruction": case.get("user_instruction", ""),
+                        "expected": case["expected_decision"],
+                        "actual": decision.decision.value,
+                        "expected_risk": case.get("expected_risk_level", ""),
+                        "actual_risk": decision.risk_level.value,
+                        "risk_score": decision.risk_score,
+                        "match": ok,
+                        "reasons": [safe_value(r) for r in decision.reasons],
+                        "triggered_policies": list(decision.triggered_policies),
+                        "audit_id": decision.audit_id,
+                    }
+                )
+            return (
+                "eval_complete",
+                f"{matched}/{len(cases)} cases match the expected decision",
+            )
+
+        job = self.jobs.submit(f"DA eval ({len(cases)} cases)", "eval", work)
+        job.total = len(cases)
+        return job
 
 
 def make_handler(console: Console):
@@ -330,6 +390,12 @@ def make_handler(console: Console):
                 # A reload has a valid cookie but no CSRF token, since that is only
                 # issued at login. Hand it back here so POSTs keep working.
                 payload["csrf"] = console.sessions.csrf_for(self._session_token())
+                active = console.jobs.active()
+                payload["active_job"] = active.id if active else None
+                try:
+                    payload["eval_cases"] = len(console.eval_cases())
+                except ValueError:
+                    payload["eval_cases"] = 0
                 return self._send(200, payload)
             if path == "/api/scenarios":
                 return self._send(200, {"scenarios": console.scenarios()})
@@ -369,6 +435,14 @@ def make_handler(console: Console):
                         job = console.run_chat(str(body["task"]).strip()[:2000])
                     else:
                         return self._send(400, {"error": "provide a scenario or a task"})
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(202, {"job": job.to_dict()})
+            if path == "/api/eval":
+                if console.jobs.busy():
+                    return self._send(409, {"error": "a run is already in progress"})
+                try:
+                    job = console.run_eval(str(body.get("only", "")).strip()[:40])
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
                 return self._send(202, {"job": job.to_dict()})
