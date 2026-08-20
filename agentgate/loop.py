@@ -17,7 +17,7 @@ import json
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .action_space import ActionSpaceError, is_terminal
 from .audit import (
@@ -101,12 +101,16 @@ class AgentLoop:
         max_steps: int = 12,
         decider: DecisionEngine | None = None,
         tool_registry: ToolRegistry | None = None,
+        on_step: Callable[[StepRecord], None] | None = None,
     ):
         self.planner = planner
         self.router = router or DecisionRouter()
         self.max_steps = max_steps
         self.decider = decider or DecisionEngine()
         self.tool_registry = tool_registry or ToolRegistry()
+        # Fired as each step is decided. A run takes minutes on CPU-only inference,
+        # so anything watching it (the web console) needs progress, not just a result.
+        self.on_step = on_step
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
         task_screen = self.decider.evaluate(
@@ -124,7 +128,12 @@ class AgentLoop:
             try:
                 proposal = self.planner.propose(task, observation)
             except Exception as exc:  # planner unavailable: fail this step, not the run
-                result.steps.append(StepRecord(i, Proposal(action_type="FAIL"), rejected_reason=f"Planner error: {exc}"))
+                self._record(
+                    result,
+                    StepRecord(
+                        i, Proposal(action_type="FAIL"), rejected_reason=f"Planner error: {exc}"
+                    ),
+                )
                 result.status = "failed"
                 result.final_message = f"Planner unavailable: {exc}"
                 break
@@ -132,7 +141,7 @@ class AgentLoop:
             try:
                 proposal.validate()
             except ActionSpaceError as exc:
-                result.steps.append(StepRecord(i, proposal, rejected_reason=str(exc)))
+                self._record(result, StepRecord(i, proposal, rejected_reason=str(exc)))
                 continue
 
             if is_terminal(proposal.action_type):
@@ -180,8 +189,9 @@ class AgentLoop:
                     proposal.to_action_request(self.tool_registry),
                     control_decision,
                 )
-                result.steps.append(
-                    StepRecord(i, proposal, decision=control_decision, outcome=outcome)
+                self._record(
+                    result,
+                    StepRecord(i, proposal, decision=control_decision, outcome=outcome),
                 )
                 result.status = outcome.status
                 result.final_message = outcome.message
@@ -195,7 +205,7 @@ class AgentLoop:
                 )
             ):
                 reason = "Real API execution requires registered trusted tool metadata"
-                result.steps.append(StepRecord(i, proposal, rejected_reason=reason))
+                self._record(result, StepRecord(i, proposal, rejected_reason=reason))
                 result.status = "failed"
                 result.final_message = reason
                 break
@@ -208,7 +218,7 @@ class AgentLoop:
                 )
             except (TypeError, ValueError) as exc:
                 reason = f"Invalid action request: {exc}"
-                result.steps.append(StepRecord(i, proposal, rejected_reason=reason))
+                self._record(result, StepRecord(i, proposal, rejected_reason=reason))
                 continue
             if getattr(self.router, "execution_enabled", False):
                 enrich = getattr(self.router, "enrich_request", None)
@@ -231,7 +241,7 @@ class AgentLoop:
                     outcome.execution_result.to_dict() if outcome.execution_result else None
                 ),
             )
-            result.steps.append(StepRecord(i, proposal, req, decision, outcome, eval_ms=eval_ms))
+            self._record(result, StepRecord(i, proposal, req, decision, outcome, eval_ms=eval_ms))
 
             observation = {"last_outcome": outcome.status, "last_decision": decision.decision.value}
             if outcome.execution_result:
@@ -252,6 +262,14 @@ class AgentLoop:
         else:
             result.status = "max_steps_reached"
         return result
+
+    def _record(self, result: RunResult, step: StepRecord) -> None:
+        result.steps.append(step)
+        if self.on_step:
+            try:
+                self.on_step(step)
+            except Exception:
+                pass  # a watcher must never break the run it is watching
 
     def _screen_execution_observation(
         self,

@@ -109,6 +109,35 @@ The CLI returns an actionable reason instead of a traceback.
 The LLM detector uses only the stdlib Ollama HTTP API. It performs no retries. The
 timeout applies per detector request.
 
+## Web Demo Console
+
+```bash
+export AGENTGATE_WEB_PASSWORD=a-long-shared-password
+python3 -m agentgate serve                 # loopback only
+python3 -m agentgate serve --host 0.0.0.0  # reachable on the network
+```
+
+Scenario runner and free-text task input, live decision cards, an approval queue, the
+audit log, and Gmail connect. Stdlib only, one embedded page, no build step.
+
+Every run is dry-run: the console evaluates and routes but never executes an action,
+and approving in the queue records the reviewer decision without executing anything.
+
+The password is required; there is no unauthenticated mode. Sessions are in memory,
+state-changing calls need a CSRF header, and a run takes minutes on CPU-only inference
+so runs happen on a worker thread while the page polls.
+
+**Connecting Gmail:** Google only accepts plain-`http` OAuth redirects to `localhost`.
+Reach the console through a tunnel and connect from there:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 -p <port> user@server
+```
+
+Then open `http://localhost:8080`. Register `http://localhost:8080/oauth/callback` as
+the redirect URI on the Google OAuth client. At any other origin the console disables
+the connect button and says why rather than failing at the redirect.
+
 ## Audit Log
 
 Auditing is mandatory (PRD F14). Every evaluation is written to Postgres before the

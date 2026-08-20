@@ -6,6 +6,7 @@ Commands:
   run <scenario>    run a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
   google-auth       run the Google OAuth consent flow for the Gmail executor
+  serve             start the web Demo Console
 
 The guardrail always uses the full local-LLM detector suite via Ollama. The planner
 is a separate layer: it defaults to deterministic scenario replay, and ``run
@@ -210,6 +211,19 @@ def cmd_google_auth(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Start the Demo Console. Requires AGENTGATE_WEB_PASSWORD."""
+    from .web.auth import AuthNotConfigured
+    from .web.app import serve
+
+    try:
+        serve(host=args.host, port=args.port)
+    except AuthNotConfigured as exc:
+        print(_c("BLOCK", str(exc)), file=sys.stderr)
+        return 1
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agentgate", description="AgentGate CLI demo (Sprint 1)")
     sub = p.add_subparsers(dest="command", required=True)
@@ -236,6 +250,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "google-auth", help="run the Google OAuth consent flow for the Gmail executor"
     ).set_defaults(func=cmd_google_auth)
+
+    w = sub.add_parser("serve", help="start the web Demo Console")
+    w.add_argument("--host", default="127.0.0.1", help="bind address (default: loopback only)")
+    w.add_argument("--port", type=int, default=8080)
+    w.set_defaults(func=cmd_serve)
 
     e = sub.add_parser("eval", help="evaluate a single ad-hoc action")
     e.add_argument("action_type")
