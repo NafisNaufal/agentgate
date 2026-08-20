@@ -1,115 +1,199 @@
 # AgentGate Quickstart
 
-Two ways to try it. **Run it locally** if you want to change code or iterate — on an
-Apple Silicon Mac the detector model is GPU-accelerated and roughly an order of
-magnitude faster than the shared server, which is CPU-only. **Use the shared console**
-if you only want to see it work.
+Two ways to try it:
+
+- **[A. Run it locally on Windows](#a-run-it-locally-windows)** — for changing code and iterating.
+- **[B. Use the shared dev console](#b-use-the-shared-dev-console)** — if you only want to see it work. No install.
+- [macOS / Linux](#c-run-it-locally-macos--linux) is at the bottom.
+
+All PowerShell commands below assume you are in the repository root.
 
 ---
 
-## A. Run it locally
+## A. Run it locally (Windows)
 
 ### 1. Prerequisites
 
 | Need | Why | Install |
 |---|---|---|
-| Python 3.10+ | the engine | `python3 --version` |
-| Postgres | audit log is mandatory (PRD F14) | `brew install postgresql@16 && brew services start postgresql@16` |
-| Ollama | runs the six detectors | https://ollama.com/download |
+| Python 3.10+ | the engine | [python.org/downloads](https://www.python.org/downloads/) — tick **"Add python.exe to PATH"** |
+| PostgreSQL 16 | audit log is mandatory (PRD F14) | `winget install PostgreSQL.PostgreSQL.16` |
+| Ollama | runs the six detectors | [ollama.com/download](https://ollama.com/download/windows) |
 
-### 2. Install
+Check Python — on Windows the launcher is `py`, not `python3`:
 
-```bash
+```powershell
+py --version
+```
+
+The Postgres installer asks for a password for the `postgres` superuser. **Write it
+down**, you need it in step 4. It also installs `psql.exe` under
+`C:\Program Files\PostgreSQL\16\bin`, which is not on PATH by default. Add it for this
+session:
+
+```powershell
+$env:Path += ";C:\Program Files\PostgreSQL\16\bin"
+```
+
+Ollama installs as a background service and starts on login, so there is usually no
+`ollama serve` to run. Confirm it is up:
+
+```powershell
+Invoke-RestMethod http://localhost:11434/api/tags
+```
+
+### 2. Install AgentGate
+
+```powershell
 git clone https://github.com/NafisNaufal/agentgate.git
 cd agentgate
-python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+py -m venv .venv
+.venv\Scripts\pip.exe install -e ".[dev]"
+```
+
+Everything from here uses `.venv\Scripts\python.exe`. Alternatively activate the venv
+once and just type `python`:
+
+```powershell
+.venv\Scripts\Activate.ps1
+```
+
+If that is blocked by execution policy, allow it for this session only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ### 3. Database and model
 
-```bash
-createdb agentgate
-ollama pull qwen2.5:7b        # ~4.7 GB, one time
+```powershell
+psql -U postgres -c "CREATE DATABASE agentgate;"
+ollama pull qwen2.5:7b
 ```
 
-Leave `ollama serve` running in another terminal if it isn't already a service.
+`ollama pull` downloads ~4.7 GB once. `psql` prompts for the superuser password from
+step 1.
 
 ### 4. Configure
 
-```bash
-export AGENTGATE_AUDIT_DSN="postgresql://$(whoami)@localhost:5432/agentgate"
-export OLLAMA_HOST=http://localhost:11434
-export AGENTGATE_LLM_DETECTOR_MODEL=qwen2.5:7b
-export AGENTGATE_LLM_DETECTOR_TIMEOUT=600
+```powershell
+$env:AGENTGATE_AUDIT_DSN        = "postgresql://postgres:YOUR_PASSWORD@localhost:5432/agentgate"
+$env:OLLAMA_HOST                = "http://localhost:11434"
+$env:AGENTGATE_LLM_DETECTOR_MODEL   = "qwen2.5:7b"
+$env:AGENTGATE_LLM_DETECTOR_TIMEOUT = "600"
 ```
 
-AgentGate does not read `.env` automatically — export these, or put them in a file and
-`source` it. Copy `.env.example` for the full list.
+Replace `YOUR_PASSWORD` with the Postgres password you set. If it contains `@`, `:`
+or `/`, percent-encode those (`@` → `%40`).
 
-`AGENTGATE_AUDIT_DSN` is required. Auditing is mandatory and fails loudly: an unset or
-unreachable DSN stops the engine at startup rather than producing decisions nobody
-recorded. If you see `Audit store unavailable`, that is the design working.
+`$env:` variables last only for the current PowerShell window. To avoid retyping them,
+save the four lines to `env.ps1` in the repo root and dot-source it each session:
+
+```powershell
+. .\env.ps1
+```
+
+`env.ps1` is gitignored, so your password will not be committed.
+
+**`AGENTGATE_AUDIT_DSN` is required.** Auditing is mandatory and fails loudly: an unset
+or unreachable DSN stops the engine at startup rather than producing decisions nobody
+recorded. `Audit store unavailable` is the design working, not a bug.
 
 ### 5. Verify
 
-```bash
-./scripts/setup.sh                                   # checks all five prerequisites
-.venv/bin/python -m unittest discover -s tests       # 182 tests, no network needed
+```powershell
+.\scripts\setup.ps1
+.venv\Scripts\python.exe -m unittest discover -s tests
 ```
+
+`setup.ps1` checks Python, Ollama, the model, the audit database, then runs the 182
+tests and a live prompt-injection smoke test. The tests themselves need no network,
+model, or database.
 
 ### 6. Run something
 
-```bash
-.venv/bin/python -m agentgate list                   # the four scenarios
-.venv/bin/python -m agentgate tools                  # registered tool catalog
+```powershell
+.venv\Scripts\python.exe -m agentgate list
+.venv\Scripts\python.exe -m agentgate tools
 
-.venv/bin/python -m agentgate run booking_message    # ALLOW -> SANITIZE -> NEED_APPROVAL
-.venv/bin/python -m agentgate run sensitive_code     # BLOCK on secrets
-.venv/bin/python -m agentgate run ambiguous_cleanup  # ASK_USER on low confidence
-.venv/bin/python -m agentgate run productivity_archive
+.venv\Scripts\python.exe -m agentgate run booking_message      # ALLOW -> SANITIZE -> NEED_APPROVAL
+.venv\Scripts\python.exe -m agentgate run sensitive_code       # BLOCK on secrets
+.venv\Scripts\python.exe -m agentgate run ambiguous_cleanup    # ASK_USER on low confidence
+.venv\Scripts\python.exe -m agentgate run productivity_archive
 ```
 
 Every run is dry-run. Nothing executes unless you pass `--execute`.
 
 Evaluate a single ad-hoc action:
 
-```bash
-.venv/bin/python -m agentgate eval API_CALL \
-  --tool-name gmail_send --target-system Gmail \
+```powershell
+.venv\Scripts\python.exe -m agentgate eval API_CALL `
+  --tool-name gmail_send --target-system Gmail `
   --payload "Hi john@example.com, pay at http://pay.example.com/invoice"
 ```
 
-Add `--json` to `run` or `eval` for structured output.
+Add `--json` to `run` or `eval` for structured output. In PowerShell the line
+continuation character is a backtick `` ` ``, not `\`.
 
 ### 7. The web console (optional)
 
-```bash
-export AGENTGATE_WEB_PASSWORD='pick-something-long'
-.venv/bin/python -m agentgate serve
+```powershell
+$env:AGENTGATE_WEB_PASSWORD = "pick-something-long"
+.venv\Scripts\python.exe -m agentgate serve
 ```
 
-Open http://localhost:8080. Scenario runner, free-text task box, live decision cards,
+Open <http://localhost:8080>. Scenario runner, free-text task box, live decision cards,
 approval queue and audit log.
 
 ---
 
-## B. Use the shared console on the dev server
+## B. Use the shared dev console
 
-Needs SSH access to the dev box. Ask Nafis for the console password.
+No install. You need your SSH key on the dev box — send it to Nafis — and the console
+password.
 
-```bash
-ssh -f -N -L 8080:127.0.0.1:8080 -p 11096 dev@proxy.bccdev.id
-open http://localhost:8080
+Windows 10 and 11 ship OpenSSH, so this works in PowerShell as-is. Open a terminal and
+leave it running:
+
+```powershell
+ssh -N -L 8080:127.0.0.1:8080 -p 11096 dev@proxy.bccdev.id
 ```
 
-The tunnel is required, not a convenience: the provider only forwards SSH to that host,
-so nothing else reaches it. It is also what makes Gmail OAuth work, since Google only
-accepts plain-`http` redirects to `localhost`.
+Then in a browser: <http://localhost:8080>
 
-Two things to expect there: the box has **no GPU**, so one action takes roughly 400
-seconds (six detector calls, run sequentially), and runs are serialized — if someone
-else is running, yours queues.
+Do not add `-f` on Windows; backgrounding is unreliable there. Keep the window open —
+closing it drops the tunnel.
+
+The tunnel is required, not a convenience: the provider forwards only SSH to that
+host, so nothing else reaches it. It is also what makes Gmail OAuth work, since Google
+only accepts plain-`http` redirects to `localhost`.
+
+Two things to expect: the box has **no GPU**, so one action takes roughly 400 seconds
+(six detector calls, run sequentially), and runs are serialized — if someone else is
+running, yours queues behind theirs.
+
+---
+
+## C. Run it locally (macOS / Linux)
+
+```bash
+brew install postgresql@16 && brew services start postgresql@16   # macOS
+git clone https://github.com/NafisNaufal/agentgate.git && cd agentgate
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+
+createdb agentgate
+ollama pull qwen2.5:7b
+
+export AGENTGATE_AUDIT_DSN="postgresql://$(whoami)@localhost:5432/agentgate"
+export AGENTGATE_LLM_DETECTOR_MODEL=qwen2.5:7b
+export AGENTGATE_LLM_DETECTOR_TIMEOUT=600
+
+./scripts/setup.sh
+.venv/bin/python -m agentgate run booking_message
+```
+
+On Apple Silicon the detector model is GPU-accelerated, so runs are far quicker than
+on the shared server.
 
 ---
 
@@ -129,25 +213,28 @@ The planner proposes; AgentGate decides. Five possible decisions:
 | `ASK_USER` | intent is ambiguous; clarify before deciding |
 | `BLOCK` | never execute |
 
-Worth knowing while you read output:
+Worth knowing while reading output:
 
 - **Two different models are involved.** The local Ollama model is the *detector*. The
-  free-text planner is a separate remote model and needs `AGENTGATE_LLM_API_KEY`;
+  free-text planner is a separate remote model needing `AGENTGATE_LLM_API_KEY`;
   without it the scenarios still work, since they replay recorded proposals.
 - **Detection is entirely LLM-driven.** Pattern matching survives in exactly one place,
   `sanitizer.py`, because redaction has to replace exact character spans.
 - **Detector outages fail closed** to `NEED_APPROVAL`, never to `ALLOW`.
-- **Slow is expected on CPU.** Six detector calls per action. Raise
-  `AGENTGATE_LLM_DETECTOR_TIMEOUT` rather than assuming something hung.
+- **Slow is expected without a GPU.** Six detector calls per action. Raise
+  `AGENTGATE_LLM_DETECTOR_TIMEOUT` rather than assuming it hung.
 
 ## If something breaks
 
 | Symptom | Cause |
 |---|---|
-| `Audit store unavailable` | Postgres down or `AGENTGATE_AUDIT_DSN` unset |
-| `LLM detector is unavailable` | `ollama serve` not running, or model not pulled |
+| `Audit store unavailable` | Postgres not running, or `AGENTGATE_AUDIT_DSN` unset/wrong password |
+| `LLM detector is unavailable` | Ollama service not running, or model not pulled |
 | Everything returns `NEED_APPROVAL` | detectors failing closed — check Ollama |
-| A run seems to hang | it probably hasn't; see the timing note above |
+| `psql` / `ollama` not recognised | not on PATH; see step 1, or reopen the terminal after installing |
+| `Activate.ps1 cannot be loaded` | execution policy; see step 2 |
+| `ModuleNotFoundError: agentgate` | using global Python instead of `.venv\Scripts\python.exe` |
+| A run seems to hang | it probably has not; see the timing note above |
 | `AGENTGATE_WEB_PASSWORD must be set` | the console never runs unauthenticated |
 
 More detail: [README.md](../README.md) for the full reference, [TUTORIAL.md](../TUTORIAL.md)

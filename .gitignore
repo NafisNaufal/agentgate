@@ -9,6 +9,8 @@ dist/
 .env
 .env.*
 !.env.example
+env.ps1
+env.sh
 *.jsonl
 audit_*.jsonl
 .DS_Store

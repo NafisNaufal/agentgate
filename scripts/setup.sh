@@ -9,10 +9,17 @@ MODEL="${AGENTGATE_LLM_DETECTOR_MODEL:-qwen2.5:7b}"
 HOST="${OLLAMA_HOST:-http://localhost:11434}"
 
 echo "== 1/5: Checking Python =="
-PYBIN="$(command -v python3 || true)"
-if [ -z "$PYBIN" ]; then
-  echo "python3 not found. Install Python 3.10+ first." >&2
-  exit 1
+# Prefer the project venv: the global interpreter will not have agentgate installed.
+if [ -x ".venv/bin/python" ]; then
+  PYBIN="$(pwd)/.venv/bin/python"
+  echo "  using venv: $PYBIN"
+else
+  PYBIN="$(command -v python3 || true)"
+  if [ -z "$PYBIN" ]; then
+    echo "python3 not found. Install Python 3.10+ first." >&2
+    exit 1
+  fi
+  echo "  no .venv found; using $PYBIN"
 fi
 "$PYBIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else "AgentGate requires Python 3.10+")'
 
