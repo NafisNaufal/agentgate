@@ -362,6 +362,8 @@ python3 -m agentgate eval API_CALL \
 
 ## Documentation
 
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — get running in a few minutes, locally or
+  against the shared dev console. Start here.
 - [TUTORIAL.md](TUTORIAL.md) — step-by-step local filesystem, dummy GitHub, and
   localhost Playwright examples.
 - [docs/ds/](docs/ds/) — Data Science design docs: guardrail objective and loop risks,

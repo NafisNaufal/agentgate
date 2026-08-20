@@ -19,6 +19,7 @@ test-results/
 .browser-data/
 *.storage-state.json
 token.json
+backups/
 
 # Confidential company documents — kept local, never pushed
 docs/*.pdf
