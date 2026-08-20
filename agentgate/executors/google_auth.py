@@ -14,6 +14,12 @@ Configuration::
     GOOGLE_CLIENT_SECRET
     GOOGLE_SCOPES        comma-separated
     GOOGLE_TOKEN_FILE    default ./token.json (gitignored)
+    GOOGLE_OAUTH_PORT    loopback callback port; 0 (default) picks a free one
+
+On a headless host pin GOOGLE_OAUTH_PORT and forward it from the machine that has a
+browser, so Google's redirect to 127.0.0.1 reaches the flow:
+
+    ssh -L 8765:127.0.0.1:8765 -p <port> user@host
 """
 
 from __future__ import annotations
@@ -48,6 +54,7 @@ class GoogleOAuthConfig:
     client_secret: str
     scopes: tuple[str, ...]
     token_file: Path
+    callback_port: int = 0
 
 
 def load_config() -> GoogleOAuthConfig:
@@ -66,7 +73,19 @@ def load_config() -> GoogleOAuthConfig:
         client_secret=os.environ["GOOGLE_CLIENT_SECRET"].strip(),
         scopes=scopes,
         token_file=Path(os.environ.get("GOOGLE_TOKEN_FILE", DEFAULT_TOKEN_FILE)),
+        callback_port=_callback_port(),
     )
+
+
+def _callback_port() -> int:
+    raw = os.environ.get("GOOGLE_OAUTH_PORT", "0").strip() or "0"
+    try:
+        port = int(raw)
+    except ValueError:
+        raise AuthError("GOOGLE_OAUTH_PORT must be an integer") from None
+    if not 0 <= port <= 65535:
+        raise AuthError("GOOGLE_OAUTH_PORT must be between 0 and 65535")
+    return port
 
 
 def access_token(config: GoogleOAuthConfig | None = None) -> str:
@@ -106,7 +125,7 @@ def run_consent_flow(config: GoogleOAuthConfig | None = None) -> Path:
     state = secrets.token_urlsafe(24)
     result: dict[str, str] = {}
 
-    with ThreadingHTTPServer(("127.0.0.1", 0), _handler_for(result)) as server:
+    with ThreadingHTTPServer(("127.0.0.1", cfg.callback_port), _handler_for(result)) as server:
         redirect_uri = f"http://127.0.0.1:{server.server_port}/"
         query = urllib.parse.urlencode(
             {

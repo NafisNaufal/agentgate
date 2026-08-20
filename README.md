@@ -222,6 +222,17 @@ Authorize once through the loopback consent flow:
 python3 -m agentgate google-auth
 ```
 
+On a headless server the browser is on a different machine, so pin the callback port
+and forward it from the machine that has one:
+
+```bash
+# on your laptop
+ssh -L 8765:127.0.0.1:8765 -p <port> user@server
+# then, in that session on the server
+export GOOGLE_OAUTH_PORT=8765
+python3 -m agentgate google-auth   # open the printed URL in your local browser
+```
+
 The flow verifies the OAuth `state` parameter and writes `token.json` with mode
 `0600`; the file is gitignored. Access tokens refresh automatically and are redacted
 from every summary, error, and returned field. Use a test Google account.
