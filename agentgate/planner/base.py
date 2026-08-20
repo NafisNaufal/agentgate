@@ -84,6 +84,8 @@ def _payload_text(
     keys = content_fields if content_fields is not None else (
         ("value",)
         if action_type == "BROWSER_TYPE"
+        else ("content",)
+        if action_type == "FILE_WRITE"
         else (
             "value",
             "payload",

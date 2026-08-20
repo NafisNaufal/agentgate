@@ -37,12 +37,20 @@ which also checks required arguments per verb.
 |---|---|
 | API | `API_CALL(tool_name, arguments)` |
 | Browser | `BROWSER_OPEN(url)`, `BROWSER_SNAPSHOT()`, `BROWSER_CLICK(element_id)`, `BROWSER_TYPE(element_id, value)`, `BROWSER_SELECT(element_id, option)`, `BROWSER_SUBMIT(element_id)`, `BROWSER_SCREENSHOT()` |
-| File | `FILE_READ(path)` |
+| File | `FILE_READ(path)`, `FILE_WRITE(path, content)`, `FILE_DELETE(path)` |
 | Control | `ASK_USER(question)`, `NEED_APPROVAL(action_description)`, `SANITIZE(payload)` |
 | Terminal | `DONE(result_summary)`, `FAIL(reason)` |
 
 A closed vocabulary is what makes the policy layer expressible: rules can match on
 `action_types` because the set is finite and known at review time.
+
+`FILE_WRITE` and `FILE_DELETE` extend the PRD's Action Space, which defines only
+`FILE_READ`. DA's eval case DATA-06 encoded a file *modification* as `FILE_READ`
+because nothing else could express it, so the guardrail evaluated a read and correctly
+allowed it - a write was simply not representable. Both verbs are evaluable and
+policy-covered but have **no executor**, so a proposal fails closed at dispatch
+instead of touching disk. Implementing them is DE's call, and the vocabulary change
+should be confirmed with DA so their eval set can encode mutations properly.
 
 ## 3. ActionRequest — the shared DS/DE contract (F3)
 

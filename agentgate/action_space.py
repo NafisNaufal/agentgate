@@ -23,6 +23,8 @@ _REQUIRED_ARGS: dict[str, tuple[str, ...]] = {
     "BROWSER_SUBMIT": ("element_id",),
     "BROWSER_SCREENSHOT": (),
     "FILE_READ": ("path",),
+    "FILE_WRITE": ("path", "content"),
+    "FILE_DELETE": ("path",),
     "ASK_USER": ("question",),
     "NEED_APPROVAL": ("action_description",),
     "SANITIZE": ("payload",),

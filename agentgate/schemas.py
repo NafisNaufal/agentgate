@@ -45,12 +45,15 @@ ACTION_TYPES = {
     "BROWSER_SUBMIT",
     "BROWSER_SCREENSHOT",
     "FILE_READ",
+    "FILE_WRITE",
+    "FILE_DELETE",
     "ASK_USER",
     "NEED_APPROVAL",
     "SANITIZE",
     "DONE",
     "FAIL",
 }
+
 
 @dataclass
 class ActionRequest:

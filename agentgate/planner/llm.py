@@ -37,11 +37,13 @@ _SYSTEM = (
     "You are the planner inside AgentGate. Given a task and the current observation, "
     "propose exactly ONE next tool call as JSON with keys: action_type (one of "
     "API_CALL, BROWSER_OPEN, BROWSER_SNAPSHOT, BROWSER_CLICK, BROWSER_TYPE, "
-    "BROWSER_SELECT, BROWSER_SUBMIT, BROWSER_SCREENSHOT, FILE_READ, ASK_USER, DONE, "
-    "FAIL), arguments (object), rationale (string), confidence (0-1), domain, "
-    "target_system, risk_hint (array). For API_CALL, arguments MUST include tool_name "
-    "(e.g. gmail_archive, github_create_gist) and a payload string. For FILE_READ "
-    "include path; for BROWSER_* include the documented args. Respond with JSON only."
+    "BROWSER_SELECT, BROWSER_SUBMIT, BROWSER_SCREENSHOT, FILE_READ, FILE_WRITE, "
+    "FILE_DELETE, ASK_USER, DONE, FAIL), arguments (object), rationale (string), "
+    "confidence (0-1), domain, target_system, risk_hint (array). For API_CALL, "
+    "arguments MUST include tool_name (e.g. gmail_archive, github_create_gist) and a "
+    "payload string. For FILE_READ and FILE_DELETE include path; for FILE_WRITE "
+    "include path and content; for BROWSER_* include the documented args. Respond "
+    "with JSON only."
 )
 
 
