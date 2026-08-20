@@ -295,6 +295,34 @@ class TestLoop(unittest.TestCase):
             ).run("control step")
             self.assertEqual(result.status, expected)
 
+    def test_every_decision_output_is_reachable_from_a_scenario(self):
+        """Sprint 1B requires all five decisions validated end to end.
+
+        ASK_USER was previously unreachable: every scenario step sat at confidence
+        >= 0.8, above the 0.75 low-confidence gate, so no scenario could produce it
+        and only four of the five decisions ever appeared in a real run.
+        """
+        seen = set()
+        for path in SCENARIO_DIR.glob("*.json"):
+            scenario = json.loads(path.read_text())
+            loop = AgentLoop(ReplayPlanner(scenario["steps"]), DecisionRouter())
+            for step in loop.run(scenario["task"]).steps:
+                if step.decision:
+                    seen.add(step.decision.decision)
+        for decision in Decision:
+            self.assertIn(decision, seen, f"{decision.value} is not reachable from any scenario")
+
+    def test_ambiguous_scenario_asks_the_user_rather_than_a_reviewer(self):
+        scenario = json.loads((SCENARIO_DIR / "ambiguous_cleanup.json").read_text())
+        decisions = [
+            s.decision.decision
+            for s in AgentLoop(ReplayPlanner(scenario["steps"]), DecisionRouter())
+            .run(scenario["task"])
+            .steps
+            if s.decision
+        ]
+        self.assertIn(Decision.ASK_USER, decisions)
+
     def test_packaged_scenarios_match_source_scenarios(self):
         packaged = files("agentgate").joinpath("scenarios")
         for name in ("booking_message", "productivity_archive", "sensitive_code"):
