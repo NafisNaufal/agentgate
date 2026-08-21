@@ -25,6 +25,7 @@ from ..executors.google_auth import AuthError
 from ..loop import AgentLoop
 from ..planner import ReplayPlanner, get_planner
 from ..router import DecisionRouter
+from ..scenario_runner import expected_summary
 from ..executors.base import safe_value
 from ..schemas import ActionRequest
 from ..tools import ToolRegistry
@@ -67,7 +68,7 @@ class Console:
                 {
                     "name": data["name"],
                     "title": data.get("title", ""),
-                    "expected": data.get("expected", ""),
+                    "expected": expected_summary(data),
                     "description": data.get("description", ""),
                     "steps": len(data["steps"]),
                 }

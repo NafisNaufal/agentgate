@@ -30,6 +30,7 @@ from .loop import AgentLoop, RunResult
 from .planner import ReplayPlanner, get_planner
 from .router import DecisionRouter
 from .sanitizer import sanitize
+from .scenario_runner import expected_summary
 from .schemas import ActionRequest
 from .tools import ToolRegistry
 
@@ -93,7 +94,7 @@ def cmd_list(_: argparse.Namespace) -> int:
         if "steps" not in data:  # skip labeled eval sets, if any land here later
             continue
         print(f"  {_c('_b', data['name']):<28} {data.get('title', '')}")
-        print(f"  {'':<2}{_c('_dim', data.get('expected', ''))}")
+        print(f"  {'':<2}{_c('_dim', expected_summary(data))}")
     return 0
 
 
@@ -139,7 +140,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     executors = build_default_executor_registry() if execute else None
     router = DecisionRouter(executors, execute=execute)
     loop = AgentLoop(planner, router, decider=decider)
-    print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {scenario.get('expected', '')}"))
+    print(_c("_dim", f"Scenario: {scenario['title']}  |  expected: {expected_summary(scenario)}"))
     try:
         result = loop.run(scenario["task"])
     finally:

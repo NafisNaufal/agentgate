@@ -369,3 +369,209 @@ python3 -m agentgate eval API_CALL \
 - [docs/ds/](docs/ds/) — Data Science design docs: guardrail objective and loop risks,
   detector/scoring design and latency budget, architecture and evaluation metrics, CLI
   contract and raw-vs-guarded benchmark plan.
+
+## Scenario Runner
+
+The Scenario Runner turns the expected behavior in every packaged scenario into an
+automated regression contract. It discovers all JSON files in
+`agentgate/scenarios/`, replays every action through the existing AgentGate pipeline,
+and compares the actual decision and risk level with the structured expectation.
+
+The runner uses the normal `ReplayPlanner`, `AgentLoop`, detector pipeline, policy
+engine, risk scoring, `DecisionEngine`, audit store, and dry-run `DecisionRouter`. It
+does not duplicate or replace production evaluation logic.
+
+### Scenario contract
+
+Every evaluated step requires a unique `id` and an `expected` object:
+
+```json
+{
+  "name": "example_scenario",
+  "title": "Example scenario",
+  "task": "Perform one guarded action",
+  "steps": [
+    {
+      "id": "inspect_page",
+      "action_type": "BROWSER_SNAPSHOT",
+      "arguments": {},
+      "expected": {
+        "decision": "ALLOW",
+        "risk_level": "LOW"
+      }
+    }
+  ]
+}
+```
+
+Valid decisions are `ALLOW`, `BLOCK`, `NEED_APPROVAL`, `SANITIZE`, and `ASK_USER`.
+Valid risk levels are `LOW`, `MEDIUM`, `HIGH`, and `CRITICAL`.
+
+Scenario files contain evaluated actions only. An explicit `DONE` step is not needed;
+`ReplayPlanner` supplies the terminal action after the recorded actions are exhausted.
+The loader rejects missing expectations, duplicate IDs, terminal steps, malformed
+metadata, invalid enum values, and unknown fields.
+
+The four packaged contracts are:
+
+- `ambiguous_cleanup`: `ALLOW/LOW -> ASK_USER/MEDIUM`
+- `booking_message`: `ALLOW/LOW -> ALLOW/LOW -> SANITIZE/MEDIUM -> NEED_APPROVAL/HIGH`
+- `productivity_archive`: `ALLOW/LOW -> NEED_APPROVAL/HIGH -> ALLOW/LOW`
+- `sensitive_code`: `BLOCK/CRITICAL -> NEED_APPROVAL/HIGH`
+
+### Runtime requirements
+
+The live runner has the same mandatory dependencies as AgentGate:
+
+- Python 3.10 or newer
+- Reachable PostgreSQL audit database
+- Ollama with the configured detector model
+
+Google OAuth, Gmail API credentials, GitHub credentials, Playwright, and provider
+accounts are not required. The runner always uses dry-run routing and never executes
+scenario actions against external systems.
+
+### Python environment
+
+Install the project from the repository root. A virtual environment is recommended
+and is required on distributions that enforce PEP 668:
+
+```bash
+mkdir -p ~/.venvs
+python3 -m venv ~/.venvs/agentgate
+source ~/.venvs/agentgate/bin/activate
+python -m pip install -e ".[dev]"
+```
+
+Reactivate the environment in each new shell:
+
+```bash
+source ~/.venvs/agentgate/bin/activate
+```
+
+Use `python3` instead of `python` if the operating system does not provide a `python`
+alias.
+
+### PostgreSQL audit store
+
+A local development database can be started with Docker:
+
+```bash
+docker run --name agentgate-postgres \
+  --restart unless-stopped \
+  -e POSTGRES_USER=agentgate \
+  -e POSTGRES_PASSWORD=agentgate \
+  -e POSTGRES_DB=agentgate \
+  -p 5432:5432 \
+  -d postgres:16
+```
+
+For subsequent sessions, start the existing container and verify readiness:
+
+```bash
+docker start agentgate-postgres
+docker exec agentgate-postgres pg_isready -U agentgate -d agentgate
+```
+
+The readiness command should report `accepting connections`.
+
+### Ollama detector runtime
+
+Start Ollama and install the detector model:
+
+```bash
+ollama serve
+ollama pull qwen2.5:7b
+ollama list
+```
+
+When Ollama was installed as a Snap service, it may already be running. Confirm with:
+
+```bash
+snap services ollama
+curl http://127.0.0.1:11434/api/tags
+```
+
+If `ollama serve` reports that port `11434` is already in use and the API request
+succeeds, use the existing service instead of starting a second server.
+
+### Environment variables
+
+Export these variables in the same shell that runs the scenarios:
+
+```bash
+export AGENTGATE_AUDIT_DSN='postgresql://agentgate:agentgate@localhost:5432/agentgate'
+export OLLAMA_HOST='http://127.0.0.1:11434'
+export AGENTGATE_LLM_DETECTOR_MODEL='qwen2.5:7b'
+```
+
+AgentGate does not automatically load `.env`. Shell exports must be repeated in each
+new terminal unless they are managed by the user's shell or process manager.
+
+### Run all scenarios
+
+From the repository root:
+
+```bash
+python3 scripts/run_scenarios.py
+```
+
+The live full-LLM run can take several minutes on CPU-only systems. A successful run
+ends with:
+
+```text
+Summary:
+Passed: 4/4
+Failed: 0/4
+Steps passed: 11/11
+
+Exit code: 0
+```
+
+Process exit codes are:
+
+- `0`: every discovered scenario and step matched its expectation
+- `1`: at least one scenario was invalid, failed to execute, or produced a mismatch
+
+An alternate directory can be checked with:
+
+```bash
+python3 scripts/run_scenarios.py --scenario-dir path/to/scenarios
+```
+
+### Scenario Runner tests
+
+The focused tests use deterministic LLM and audit test doubles, so they do not require
+PostgreSQL or Ollama:
+
+```bash
+python3 -m unittest -v tests.test_scenario_runner
+```
+
+Run the complete test suite with:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Coverage includes valid and invalid parsing, missing expectations, unknown fields,
+AgentGate loop construction, proposal alignment, decision and risk comparison,
+human-readable reporting, all four packaged contracts, and non-zero exit behavior for
+an intentional mismatch.
+
+### Troubleshooting
+
+`AGENTGATE_AUDIT_DSN is not set` means the variable was not exported in the current
+terminal. `Connection refused` on port `5432` means PostgreSQL is not running or is
+not reachable.
+
+If every action becomes `NEED_APPROVAL/HIGH`, check Ollama and the configured model.
+AgentGate intentionally fails closed when a detector is unavailable or returns an
+invalid response.
+
+If the report contains a mixture of passing and failing decisions, infrastructure is
+usually working and the runner has detected behavioral drift. Inspect the audit
+reasons rather than changing expectations merely to make the command pass.
+
+Detailed design, migration notes, architecture, output examples, and future work are
+documented in [docs/scenario-runner.md](docs/scenario-runner.md).

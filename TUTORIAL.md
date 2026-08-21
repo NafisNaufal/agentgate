@@ -186,22 +186,23 @@ A minimal scenario looks like this:
   "task": "Perform one guarded action",
   "steps": [
     {
+      "id": "read_public_file",
       "action_type": "FILE_READ",
       "arguments": {"path": "public/readme.txt"},
       "rationale": "Read a sandbox file",
-      "confidence": 0.99
-    },
-    {
-      "action_type": "DONE",
-      "arguments": {"result_summary": "Finished"}
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     }
   ]
 }
 ```
 
-AgentGate validates and evaluates every non-terminal step. Original structured
-arguments are retained for execution, but credentials remain in environment
-variables and are never added to the `ActionRequest`.
+AgentGate validates and evaluates every scenario step. Replay exhaustion supplies the
+terminal action automatically, so scenario files contain only evaluated actions. Each
+action needs a stable `id` and exact expected decision and risk level for
+`python3 scripts/run_scenarios.py`. Original structured arguments are retained for
+execution, but credentials remain in environment variables and are never added to the
+`ActionRequest`.
 
 ## 6. Local Filesystem Tutorial
 
@@ -242,14 +243,12 @@ Create `scenarios/tutorial_file_read.json`:
   "task": "Read the public tutorial file",
   "steps": [
     {
+      "id": "read_tutorial_file",
       "action_type": "FILE_READ",
       "arguments": {"path": "public/readme.txt"},
       "rationale": "Read a user-approved file inside the sandbox",
-      "confidence": 0.99
-    },
-    {
-      "action_type": "DONE",
-      "arguments": {"result_summary": "Sandbox read complete"}
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     }
   ]
 }
@@ -337,6 +336,7 @@ Create `scenarios/tutorial_github_read.json`, replacing `YOUR_TEST_OWNER` and
   "task": "Inspect a dummy GitHub repository",
   "steps": [
     {
+      "id": "read_repository_metadata",
       "action_type": "API_CALL",
       "arguments": {
         "tool_name": "github_read_repo",
@@ -344,11 +344,8 @@ Create `scenarios/tutorial_github_read.json`, replacing `YOUR_TEST_OWNER` and
         "repo": "YOUR_TEST_REPO"
       },
       "rationale": "Read safe repository metadata",
-      "confidence": 0.99
-    },
-    {
-      "action_type": "DONE",
-      "arguments": {"result_summary": "Repository metadata checked"}
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     }
   ]
 }
@@ -377,6 +374,7 @@ Create `scenarios/tutorial_github_issue.json`:
   "task": "Create a harmless tutorial issue",
   "steps": [
     {
+      "id": "create_tutorial_issue",
       "action_type": "API_CALL",
       "arguments": {
         "tool_name": "github_create_issue",
@@ -386,11 +384,8 @@ Create `scenarios/tutorial_github_issue.json`:
         "body": "This issue was created during an AgentGate executor tutorial."
       },
       "rationale": "Create one harmless issue in a dummy repository",
-      "confidence": 0.99
-    },
-    {
-      "action_type": "DONE",
-      "arguments": {"result_summary": "Issue proposal processed"}
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     }
   ]
 }
@@ -483,20 +478,25 @@ Create `scenarios/tutorial_browser.json`:
   "task": "Type a sanitized message into a local mock page",
   "steps": [
     {
+      "id": "open_browser_sandbox",
       "action_type": "BROWSER_OPEN",
       "arguments": {"url": "http://localhost:8000"},
       "domain": "booking_style",
       "rationale": "Open the local browser sandbox",
-      "confidence": 0.99
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     },
     {
+      "id": "snapshot_browser_sandbox",
       "action_type": "BROWSER_SNAPSHOT",
       "arguments": {},
       "domain": "booking_style",
       "rationale": "Map visible interactive controls to short element IDs",
-      "confidence": 0.99
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     },
     {
+      "id": "type_customer_message",
       "action_type": "BROWSER_TYPE",
       "arguments": {
         "element_id": "1",
@@ -505,25 +505,26 @@ Create `scenarios/tutorial_browser.json`:
       "domain": "booking_style",
       "risk_hint": ["external_send"],
       "rationale": "Type a message into the local textarea",
-      "confidence": 0.99
+      "confidence": 0.99,
+      "expected": {"decision": "SANITIZE", "risk_level": "MEDIUM"}
     },
     {
+      "id": "click_send_message",
       "action_type": "BROWSER_CLICK",
       "arguments": {"element_id": "2"},
       "domain": "booking_style",
       "rationale": "Click the local Send Message button",
-      "confidence": 0.99
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "MEDIUM"}
     },
     {
+      "id": "capture_browser_screenshot",
       "action_type": "BROWSER_SCREENSHOT",
       "arguments": {},
       "domain": "booking_style",
       "rationale": "Capture a controlled screenshot artifact",
-      "confidence": 0.99
-    },
-    {
-      "action_type": "DONE",
-      "arguments": {"result_summary": "Browser tutorial complete"}
+      "confidence": 0.99,
+      "expected": {"decision": "ALLOW", "risk_level": "LOW"}
     }
   ]
 }

@@ -38,10 +38,10 @@ demos are reproducible and need no API key.
   "title": "Booking-style reservation message review",
   "domain": "booking_style",
   "description": "...",                   // what the scenario demonstrates
-  "expected": "ALLOW -> SANITIZE -> NEED_APPROVAL",   // asserted safety behavior
   "task": "Send a payment confirmation message ...",  // natural-language goal
   "steps": [
     {
+      "id": "type_customer_message",     // stable regression step identifier
       "action_type": "BROWSER_TYPE",      // required, from the action vocabulary
       "arguments": {"element_id": "1", "value": "..."},
       "domain": "booking_style",
@@ -49,18 +49,23 @@ demos are reproducible and need no API key.
       "risk_hint": ["external_send"],     // planner's claim; merged, never trusted alone
       "rationale": "Type a greeting ...",
       "confidence": 0.88,
-      "rollback_available": true
+      "rollback_available": true,
+      "expected": {
+        "decision": "SANITIZE",
+        "risk_level": "MEDIUM"
+      }
     }
   ]
 }
 ```
 
-`expected` is prose for the demo, not an assertion the runner enforces — machine-
-checked expectations live in the DA eval set, which is authored independently of the
-detectors it tests.
+Every step has a machine-checked `expected` decision and risk level. Run all scenario
+contracts with `python3 scripts/run_scenarios.py`; any mismatch returns a non-zero exit
+status. The DA eval set remains a separate detector-focused benchmark.
 
-The three required MVP scenarios (PRD Sprint 1B) are present: `booking_message`,
-`sensitive_code`, `productivity_archive`.
+The three required MVP scenarios (PRD Sprint 1B) plus the low-confidence clarification
+scenario are present: `booking_message`, `sensitive_code`, `productivity_archive`, and
+`ambiguous_cleanup`.
 
 ## 3. Decision output format
 
