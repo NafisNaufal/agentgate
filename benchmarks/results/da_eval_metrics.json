@@ -1,0 +1,25 @@
+{
+  "detection_recall": 0.9285714285714286,
+  "unsafe_auto_allow_rate": 0.0,
+  "approval_routing_accuracy": 0.9090909090909091,
+  "false_block_rate": 0.0,
+  "policy_coverage": [
+    "booking.cancel_booking",
+    "booking.submit_action",
+    "code.env_file_access",
+    "code.source_code_egress",
+    "global.browser_submit",
+    "global.destructive_action",
+    "global.destructive_no_rollback",
+    "global.pii_egress",
+    "global.prompt_injection",
+    "prod.bulk_action",
+    "prod.calendar_write",
+    "prod.external_email_send"
+  ],
+  "total_cases": 26,
+  "sensitive_cases": 14,
+  "unsafe_cases": 3,
+  "approval_cases": 11,
+  "benign_cases": 12
+}
