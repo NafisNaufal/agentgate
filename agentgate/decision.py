@@ -178,6 +178,7 @@ class DecisionEngine:
             sensitive_entities=entities,
             sanitized_payload=sanitized_payload,
             next_step=_NEXT_STEP[decision],
+            evaluation_error=detector_error,
         )
         # Stamps response.audit_id in place. A failed write raises AuditUnavailable:
         # an unauditable decision must not be returned as if it had been recorded.

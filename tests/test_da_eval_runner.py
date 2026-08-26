@@ -18,7 +18,7 @@ class FakeAuditStore:
             "audit_id": audit_id,
             "timestamp": 1.0,
             "request": {"action_type": "API_CALL"},
-            "response": {"decision": "ALLOW"},
+            "response": {"decision": "ALLOW", "reasons": ["clean"]},
             "execution_status": "pending",
         }
 
@@ -46,6 +46,11 @@ class FakeDecisionEngine:
     def evaluate(self, request):
         self.requests.append(request)
         return self.responses[request.action_type]
+
+
+class RaisingDecisionEngine(FakeDecisionEngine):
+    def evaluate(self, request):
+        raise RuntimeError("evaluation failed")
 
 
 def _case(
@@ -182,7 +187,7 @@ class TestDAEvaluationRunner(unittest.TestCase):
 
     def test_fail_closed_detector_response_is_still_a_runtime_failure(self) -> None:
         response = _response(Decision.NEED_APPROVAL, RiskLevel.HIGH)
-        response.reasons = ["LLM detector is unavailable. Ollama is offline."]
+        response.evaluation_error = "LLM detector is unavailable. Ollama is offline."
         engine = FakeDecisionEngine({"API_CALL": response})
 
         report = evaluate_cases(
@@ -192,6 +197,26 @@ class TestDAEvaluationRunner(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertEqual(report["summary"]["errors"], 1)
         self.assertEqual(report["summary"]["mismatches"], 0)
+
+    def test_failed_sensitive_case_stays_in_recall_denominator(self) -> None:
+        engine = RaisingDecisionEngine({})
+
+        report = evaluate_cases(
+            [
+                _case(
+                    "SENSITIVE",
+                    "API_CALL",
+                    "BLOCK",
+                    "CRITICAL",
+                    entity_kinds=["SOURCE_CODE"],
+                )
+            ],
+            engine,
+        )
+
+        recall = report["metrics"]["sensitive_data_detection_recall"]
+        self.assertEqual(recall["value"], 0.0)
+        self.assertEqual(recall["denominator"], 1)
 
 
 if __name__ == "__main__":

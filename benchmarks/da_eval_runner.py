@@ -31,7 +31,6 @@ _APPROVAL_DECISIONS = {"NEED_APPROVAL", "ASK_USER"}
 _DECISIONS = {decision.value for decision in Decision}
 _RISK_LEVELS = {level.value for level in RiskLevel}
 _EXPECTATION_SOURCES = {"da_approved", "inferred"}
-_RUNTIME_FAILURE_PREFIXES = ("LLM detector is unavailable.", "LLM detector ")
 
 
 def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
@@ -79,22 +78,28 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
                 "reasons": list(response.reasons),
                 "audit_id": response.audit_id,
             }
-            runtime_error = _runtime_failure(response.reasons)
+            runtime_error = response.evaluation_error
             if runtime_error:
                 case_result["runtime_error"] = runtime_error
             results.append(case_result)
         except Exception as exc:
-            results.append(
-                {
-                    "id": case.get("id", "<unknown>"),
-                    "title": case.get("title", "<unknown>"),
-                    "expectation_source": source,
-                    "error": f"{type(exc).__name__}: {exc}",
-                    "elapsed_ms": round(
-                        (time.perf_counter() - (evaluation_started or started)) * 1000, 3
-                    ),
-                }
-            )
+            error_result = {
+                "id": case.get("id", "<unknown>"),
+                "title": case.get("title", "<unknown>"),
+                "expectation_source": source,
+                "error": f"{type(exc).__name__}: {exc}",
+                "elapsed_ms": round(
+                    (time.perf_counter() - (evaluation_started or started)) * 1000, 3
+                ),
+            }
+            for key in (
+                "expected_decision",
+                "expected_risk_level",
+                "expected_entity_kinds",
+            ):
+                if key in case:
+                    error_result[key] = case[key]
+            results.append(error_result)
 
     completed = [result for result in results if "error" not in result]
     errors = [
@@ -206,24 +211,23 @@ def _validate_dataset(cases: list[dict[str, Any]]) -> None:
 
 def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
     completed = [result for result in results if "error" not in result]
-    unsafe = [result for result in completed if result["expected_decision"] != "ALLOW"]
-    sensitive = [
-        result for result in completed if result.get("expected_entity_kinds")
-    ]
+    expected = [result for result in results if "expected_decision" in result]
+    unsafe = [result for result in expected if result["expected_decision"] != "ALLOW"]
+    sensitive = [result for result in expected if result.get("expected_entity_kinds")]
     approval = [
         result
-        for result in completed
+        for result in expected
         if result["expected_decision"] in _APPROVAL_DECISIONS
     ]
-    benign = [result for result in completed if result["expected_decision"] == "ALLOW"]
+    benign = [result for result in expected if result["expected_decision"] == "ALLOW"]
 
     expected_entity_count = sum(
         len(set(result["expected_entity_kinds"])) for result in sensitive
     )
     detected_entity_count = sum(
-        len(
-            set(result["expected_entity_kinds"])
-            & set(result["sensitive_entity_kinds"])
+            len(
+                set(result["expected_entity_kinds"])
+                & set(result.get("sensitive_entity_kinds", []))
         )
         for result in sensitive
     )
@@ -232,7 +236,11 @@ def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
         {kind for result in sensitive for kind in result["expected_entity_kinds"]}
     ):
         expected = [result for result in sensitive if kind in result["expected_entity_kinds"]]
-        detected = [result for result in expected if kind in result["sensitive_entity_kinds"]]
+        detected = [
+            result
+            for result in expected
+            if kind in result.get("sensitive_entity_kinds", [])
+        ]
         by_entity_kind[kind] = _ratio(len(detected), len(expected))
 
     recall = _ratio(detected_entity_count, expected_entity_count)
@@ -240,24 +248,19 @@ def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
     return {
         "action_evaluation_completion_rate": _ratio(len(completed), total),
         "unsafe_auto_allow_rate": _ratio(
-            sum(result["actual_decision"] == "ALLOW" for result in unsafe), len(unsafe)
+            sum(result.get("actual_decision") == "ALLOW" for result in unsafe),
+            len(unsafe),
         ),
         "sensitive_data_detection_recall": recall,
         "approval_routing_accuracy": _ratio(
-            sum(result["actual_decision"] in _APPROVAL_DECISIONS for result in approval),
+            sum(result.get("actual_decision") in _APPROVAL_DECISIONS for result in approval),
             len(approval),
         ),
         "false_block_rate": _ratio(
-            sum(result["actual_decision"] == "BLOCK" for result in benign), len(benign)
+            sum(result.get("actual_decision") == "BLOCK" for result in benign),
+            len(benign),
         ),
     }
-
-
-def _runtime_failure(reasons: list[str]) -> str | None:
-    for reason in reasons:
-        if reason.startswith(_RUNTIME_FAILURE_PREFIXES):
-            return reason
-    return None
 
 
 def _complete_metrics(
@@ -360,7 +363,19 @@ def _audit_record_complete(record: Any) -> bool:
         response = getattr(record, "response", None)
         status = getattr(record, "execution_status", None)
         timestamp = getattr(record, "timestamp", None)
-    return bool(request) and bool(response) and bool(status) and timestamp is not None
+    if isinstance(response, dict):
+        decision = response.get("decision")
+        reasons = response.get("reasons")
+    else:
+        decision = getattr(response, "decision", None)
+        reasons = getattr(response, "reasons", None)
+    return (
+        request is not None
+        and decision is not None
+        and reasons is not None
+        and bool(status)
+        and timestamp is not None
+    )
 
 
 def main() -> int:

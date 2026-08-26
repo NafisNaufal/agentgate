@@ -193,6 +193,7 @@ class DecisionResponse:
     sanitized_payload: str | None = None
     next_step: str = ""
     audit_id: str = ""
+    evaluation_error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
