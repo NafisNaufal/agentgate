@@ -25,11 +25,11 @@ sys.path.insert(0, str(ROOT))
 
 from agentgate.audit import AuditUnavailable  # noqa: E402
 from agentgate.decision import DecisionEngine  # noqa: E402
-from agentgate.schemas import ActionRequest  # noqa: E402
+from agentgate.schemas import ActionRequest, Decision, RiskLevel  # noqa: E402
 
 _APPROVAL_DECISIONS = {"NEED_APPROVAL", "ASK_USER"}
-_DECISIONS = {"ALLOW", "SANITIZE", "ASK_USER", "NEED_APPROVAL", "BLOCK"}
-_RISK_LEVELS = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+_DECISIONS = {decision.value for decision in Decision}
+_RISK_LEVELS = {level.value for level in RiskLevel}
 _EXPECTATION_SOURCES = {"da_approved", "inferred"}
 
 
@@ -38,7 +38,7 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for case in cases:
         started = time.perf_counter()
-        source = case.get("expectation_source", "da_approved")
+        source = case.get("expectation_source", "<missing>")
         try:
             _validate_case(case)
             request = ActionRequest(**case["action_request"])
@@ -108,7 +108,7 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
     metrics = _metrics_for(results, len(results))
     metrics.update(
         {
-            "policy_coverage": _ratio(len(set(triggered_policy_ids) & all_policy_ids), len(all_policy_ids)),
+            "policy_coverage": _policy_coverage(completed, all_policy_ids),
             "guardrail_evaluation_latency_ms": _latency_metrics(completed),
             "audit_completeness": _audit_completeness(engine),
             "task_success": None,
@@ -116,6 +116,17 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
     )
     approved_results = sources["da_approved"]
     headline_metrics = _metrics_for(approved_results, len(approved_results))
+    headline_metrics.update(
+        {
+            "policy_coverage": _policy_coverage(approved_results, all_policy_ids),
+            "guardrail_evaluation_latency_ms": _latency_metrics(
+                [result for result in approved_results if "error" not in result]
+            ),
+            "audit_completeness": metrics["audit_completeness"],
+            "task_success": None,
+        }
+    )
+    audit_metric = metrics["audit_completeness"]
     source_metrics = {
         source: {
             "total": len(source_results),
@@ -126,7 +137,7 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
     }
 
     return {
-        "ok": bool(results) and not errors and not mismatches,
+        "ok": bool(results) and not errors and not mismatches and "error" not in audit_metric,
         "summary": {
             "total": len(results),
             "completed": len(completed),
@@ -151,11 +162,18 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
 
 
 def _validate_case(case: dict[str, Any]) -> None:
-    required = ("id", "title", "expected_decision", "expected_risk_level", "action_request")
+    required = (
+        "id",
+        "title",
+        "expectation_source",
+        "expected_decision",
+        "expected_risk_level",
+        "action_request",
+    )
     missing = [key for key in required if key not in case]
     if missing:
         raise ValueError(f"case is missing required fields: {', '.join(missing)}")
-    source = case.get("expectation_source", "da_approved")
+    source = case["expectation_source"]
     if source not in _EXPECTATION_SOURCES:
         raise ValueError(f"expectation_source must be one of {sorted(_EXPECTATION_SOURCES)}")
     if case["expected_decision"] not in _DECISIONS:
@@ -247,6 +265,16 @@ def _policy_ids(engine: Any) -> set[str]:
     return {rule["id"] for rule in rules if isinstance(rule, dict) and "id" in rule}
 
 
+def _policy_coverage(results: list[dict[str, Any]], all_policy_ids: set[str]) -> dict[str, Any]:
+    triggered = {
+        policy_id
+        for result in results
+        if "error" not in result
+        for policy_id in result["triggered_policies"]
+    }
+    return _ratio(len(triggered & all_policy_ids), len(all_policy_ids))
+
+
 def _audit_completeness(engine: Any) -> dict[str, Any]:
     completeness = getattr(getattr(engine, "audit_store", None), "completeness", None)
     if not callable(completeness):
@@ -318,7 +346,9 @@ def _print_single_case(case: dict[str, Any], report: dict[str, Any]) -> None:
         print(f"  triggered_policies: {case['triggered_policies']}")
     if case["sanitized_payload"]:
         print(f"  sanitized_payload: {case['sanitized_payload']!r}")
-    _print_metric_summary(report["metrics"])
+    _print_metric_summary(
+        report["headline_metrics"], heading="Headline metrics (DA-approved)"
+    )
 
 
 def _print_table(report: dict[str, Any]) -> None:
@@ -344,11 +374,21 @@ def _print_table(report: dict[str, Any]) -> None:
             f"{case['actual_risk_level']:<10} {mark:<8} {case['title']}"
         )
     print()
-    _print_metric_summary(report["metrics"])
+    print("Expectation sources:")
+    for source, count in summary["expectation_sources"].items():
+        print(f"  {source}: {count}")
+    _print_metric_summary(
+        report["headline_metrics"], heading="Headline metrics (DA-approved)"
+    )
+    if "inferred" in report["metrics_by_expectation_source"]:
+        _print_metric_summary(
+            report["metrics_by_expectation_source"]["inferred"]["metrics"],
+            heading="Provisional metrics (inferred)",
+        )
 
 
-def _print_metric_summary(metrics: dict[str, Any]) -> None:
-    print("Metrics:")
+def _print_metric_summary(metrics: dict[str, Any], *, heading: str = "Metrics") -> None:
+    print(f"{heading}:")
     for name, metric in metrics.items():
         if name == "task_success":
             print(f"  {name}: N/A")
@@ -356,6 +396,8 @@ def _print_metric_summary(metrics: dict[str, Any]) -> None:
             print(f"  {name}: P50={metric['p50_ms']} ms, P95={metric['p95_ms']} ms")
         elif name == "sensitive_data_detection_recall":
             print(f"  {name}: {_format_value(metric['value'])}")
+            for kind, kind_metric in metric["by_entity_kind"].items():
+                print(f"    {kind}: {_format_value(kind_metric['value'])}")
         elif isinstance(metric, dict) and "value" in metric:
             print(f"  {name}: {_format_value(metric['value'])}")
 

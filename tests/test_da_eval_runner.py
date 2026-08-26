@@ -14,6 +14,11 @@ class FakeAuditStore:
         return self._completeness
 
 
+class BrokenAuditStore:
+    def completeness(self) -> float:
+        raise RuntimeError("audit read failed")
+
+
 class FakePolicyEngine:
     def __init__(self) -> None:
         self.rules = [
@@ -144,6 +149,17 @@ class TestDAEvaluationRunner(unittest.TestCase):
         self.assertEqual(report["summary"]["errors"], 1)
         self.assertIn("action_request", report["cases"][0]["error"])
         self.assertEqual(engine.requests, [])
+
+    def test_audit_metric_failure_fails_the_run(self) -> None:
+        engine = FakeDecisionEngine(
+            {"safe": _response(Decision.ALLOW, RiskLevel.LOW)}
+        )
+        engine.audit_store = BrokenAuditStore()
+
+        report = evaluate_cases([_case("SAFE", "safe", "ALLOW", "LOW")], engine)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("audit read failed", report["metrics"]["audit_completeness"]["error"])
 
 
 if __name__ == "__main__":

@@ -125,4 +125,7 @@ Each case also declares `expectation_source` as either `da_approved` or `inferre
 19 DA-approved cases form the headline decision metrics and the 7 inferred cases are
 reported separately. Sensitive cases declare `expected_entity_kinds`, which supplies
 the independent denominator for detector recall. Task success is not reported by this
-runner because its cases are dry-run proposals and do not execute a real task.
+runner because its cases are dry-run proposals and do not execute a real task. The
+runner's approval-routing denominator is the set of cases expected to produce
+`NEED_APPROVAL` or `ASK_USER`; expected `BLOCK` cases are safety-blocking cases, not
+approval-routing cases.
