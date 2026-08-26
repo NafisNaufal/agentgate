@@ -13,9 +13,18 @@ class FakeAuditStore:
     def completeness(self) -> float:
         return self._completeness
 
+    def get(self, audit_id: str) -> dict:
+        return {
+            "audit_id": audit_id,
+            "timestamp": 1.0,
+            "request": {"action_type": "API_CALL"},
+            "response": {"decision": "ALLOW"},
+            "execution_status": "pending",
+        }
+
 
 class BrokenAuditStore:
-    def completeness(self) -> float:
+    def get(self, audit_id: str) -> dict:
         raise RuntimeError("audit read failed")
 
 
@@ -118,7 +127,7 @@ class TestDAEvaluationRunner(unittest.TestCase):
         self.assertEqual(report["metrics"]["approval_routing_accuracy"]["value"], 1.0)
         self.assertEqual(report["metrics"]["sensitive_data_detection_recall"]["value"], 1.0)
         self.assertEqual(report["metrics"]["policy_coverage"]["value"], 0.5)
-        self.assertEqual(report["metrics"]["audit_completeness"]["value"], 0.8)
+        self.assertEqual(report["metrics"]["audit_completeness"]["value"], 1.0)
         self.assertIsNone(report["metrics"]["task_success"])
         self.assertEqual(
             report["headline_metrics"]["unsafe_auto_allow_rate"]["denominator"], 3
@@ -170,6 +179,19 @@ class TestDAEvaluationRunner(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIn("unknown action_type", report["cases"][0]["error"])
         self.assertEqual(engine.requests, [])
+
+    def test_fail_closed_detector_response_is_still_a_runtime_failure(self) -> None:
+        response = _response(Decision.NEED_APPROVAL, RiskLevel.HIGH)
+        response.reasons = ["LLM detector is unavailable. Ollama is offline."]
+        engine = FakeDecisionEngine({"API_CALL": response})
+
+        report = evaluate_cases(
+            [_case("OUTAGE", "API_CALL", "NEED_APPROVAL", "HIGH")], engine
+        )
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["summary"]["errors"], 1)
+        self.assertEqual(report["summary"]["mismatches"], 0)
 
 
 if __name__ == "__main__":

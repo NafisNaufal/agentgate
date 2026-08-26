@@ -31,6 +31,7 @@ _APPROVAL_DECISIONS = {"NEED_APPROVAL", "ASK_USER"}
 _DECISIONS = {decision.value for decision in Decision}
 _RISK_LEVELS = {level.value for level in RiskLevel}
 _EXPECTATION_SOURCES = {"da_approved", "inferred"}
+_RUNTIME_FAILURE_PREFIXES = ("LLM detector is unavailable.", "LLM detector ")
 
 
 def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
@@ -38,46 +39,50 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
     results: list[dict[str, Any]] = []
     for case in cases:
         started = time.perf_counter()
+        evaluation_started: float | None = None
         source = case.get("expectation_source", "<missing>")
         try:
             _validate_case(case)
             request = ActionRequest(**case["action_request"])
+            evaluation_started = time.perf_counter()
             response = engine.evaluate(request)
-            elapsed_ms = (time.perf_counter() - started) * 1000
+            elapsed_ms = (time.perf_counter() - evaluation_started) * 1000
             actual_decision = response.decision.value
             actual_risk = response.risk_level.value
             expected_decision = case["expected_decision"]
             expected_risk = case["expected_risk_level"]
             decision_match = actual_decision == expected_decision
             risk_match = actual_risk == expected_risk
-            results.append(
-                {
-                    "id": case["id"],
-                    "title": case["title"],
-                    "user_instruction": case.get("user_instruction", ""),
-                    "expectation_source": source,
-                    "expected_decision": expected_decision,
-                    "expected_risk_level": expected_risk,
-                    "expected_entity_kinds": list(case.get("expected_entity_kinds", [])),
-                    "actual_decision": actual_decision,
-                    "actual_risk_level": actual_risk,
-                    "risk_score": response.risk_score,
-                    "decision_match": decision_match,
-                    "risk_match": risk_match,
-                    "match": decision_match and risk_match,
-                    "elapsed_ms": round(elapsed_ms, 3),
-                    "triggered_policies": list(response.triggered_policies),
-                    "sensitive_entities": [
-                        entity.to_dict() for entity in response.sensitive_entities
-                    ],
-                    "sensitive_entity_kinds": sorted(
-                        {entity.kind for entity in response.sensitive_entities}
-                    ),
-                    "sanitized_payload": response.sanitized_payload,
-                    "reasons": list(response.reasons),
-                    "audit_id": response.audit_id,
-                }
-            )
+            case_result = {
+                "id": case["id"],
+                "title": case["title"],
+                "user_instruction": case.get("user_instruction", ""),
+                "expectation_source": source,
+                "expected_decision": expected_decision,
+                "expected_risk_level": expected_risk,
+                "expected_entity_kinds": list(case.get("expected_entity_kinds", [])),
+                "actual_decision": actual_decision,
+                "actual_risk_level": actual_risk,
+                "risk_score": response.risk_score,
+                "decision_match": decision_match,
+                "risk_match": risk_match,
+                "match": decision_match and risk_match,
+                "elapsed_ms": round(elapsed_ms, 3),
+                "triggered_policies": list(response.triggered_policies),
+                "sensitive_entities": [
+                    entity.to_dict() for entity in response.sensitive_entities
+                ],
+                "sensitive_entity_kinds": sorted(
+                    {entity.kind for entity in response.sensitive_entities}
+                ),
+                "sanitized_payload": response.sanitized_payload,
+                "reasons": list(response.reasons),
+                "audit_id": response.audit_id,
+            }
+            runtime_error = _runtime_failure(response.reasons)
+            if runtime_error:
+                case_result["runtime_error"] = runtime_error
+            results.append(case_result)
         except Exception as exc:
             results.append(
                 {
@@ -85,12 +90,16 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
                     "title": case.get("title", "<unknown>"),
                     "expectation_source": source,
                     "error": f"{type(exc).__name__}: {exc}",
-                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
+                    "elapsed_ms": round(
+                        (time.perf_counter() - (evaluation_started or started)) * 1000, 3
+                    ),
                 }
             )
 
     completed = [result for result in results if "error" not in result]
-    errors = [result for result in results if "error" in result]
+    errors = [
+        result for result in results if "error" in result or "runtime_error" in result
+    ]
     mismatches = [result for result in completed if not result["match"]]
     sources = {
         source: [result for result in results if result["expectation_source"] == source]
@@ -105,7 +114,7 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
         }
     )
 
-    audit_metric = _audit_completeness(engine)
+    audit_metric = _audit_completeness(engine, results)
     metrics = _complete_metrics(results, len(results), all_policy_ids, audit_metric)
     approved_results = sources["da_approved"]
     headline_metrics = _complete_metrics(
@@ -244,6 +253,13 @@ def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
     }
 
 
+def _runtime_failure(reasons: list[str]) -> str | None:
+    for reason in reasons:
+        if reason.startswith(_RUNTIME_FAILURE_PREFIXES):
+            return reason
+    return None
+
+
 def _complete_metrics(
     results: list[dict[str, Any]],
     total: int,
@@ -303,22 +319,48 @@ def _policy_coverage(results: list[dict[str, Any]], all_policy_ids: set[str]) ->
     return _ratio(len(triggered & all_policy_ids), len(all_policy_ids))
 
 
-def _audit_completeness(engine: Any) -> dict[str, Any]:
-    completeness = getattr(getattr(engine, "audit_store", None), "completeness", None)
-    if not callable(completeness):
+def _audit_completeness(engine: Any, results: list[dict[str, Any]]) -> dict[str, Any]:
+    get_record = getattr(getattr(engine, "audit_store", None), "get", None)
+    if not callable(get_record):
         return {
             "value": None,
             "scope": "selected_run",
-            "error": "audit store does not expose completeness()",
+            "error": "audit store does not expose get()",
         }
     try:
-        return {"value": completeness(), "scope": "selected_run"}
+        complete = sum(
+            1
+            for result in results
+            if _audit_record_complete(get_record(result.get("audit_id", "")))
+        )
+        return {
+            "value": round(complete / len(results), 4) if results else 1.0,
+            "numerator": complete,
+            "denominator": len(results),
+            "scope": "selected_run",
+        }
     except Exception as exc:
         return {
             "value": None,
             "scope": "selected_run",
             "error": f"{type(exc).__name__}: {exc}",
         }
+
+
+def _audit_record_complete(record: Any) -> bool:
+    if record is None:
+        return False
+    if isinstance(record, dict):
+        request = record.get("request")
+        response = record.get("response")
+        status = record.get("execution_status")
+        timestamp = record.get("timestamp")
+    else:
+        request = getattr(record, "request", None)
+        response = getattr(record, "response", None)
+        status = getattr(record, "execution_status", None)
+        timestamp = getattr(record, "timestamp", None)
+    return bool(request) and bool(response) and bool(status) and timestamp is not None
 
 
 def main() -> int:
