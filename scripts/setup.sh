@@ -36,6 +36,13 @@ if ! curl -fsS "$HOST/api/tags" >/dev/null 2>&1; then
   echo "Ollama is not responding at $HOST. Start it with: ollama serve" >&2
   exit 1
 fi
+if [ -z "${OLLAMA_NUM_PARALLEL:-}" ]; then
+  echo "NOTE: OLLAMA_NUM_PARALLEL is not set in this shell. AgentGate dispatches its"
+  echo "six detectors concurrently, but Ollama serves them one at a time unless its"
+  echo "own parallelism is raised. Restart 'ollama serve' with"
+  echo "  export OLLAMA_NUM_PARALLEL=6"
+  echo "set BEFORE it starts, or evaluation stays as slow as the old sequential loop."
+fi
 
 echo "== 3/5: Pulling detector model $MODEL =="
 ollama pull "$MODEL"

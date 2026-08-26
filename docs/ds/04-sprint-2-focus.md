@@ -29,13 +29,22 @@ of truth for the complete project scope and acceptance criteria.
 ### Performance
 
 - Build the latency profiler for detector, policy, risk scoring, decision, and audit
-  stages.
+  stages. Done.
 - Build the raw-vs-guarded benchmark harness for comparable API and browser actions.
+  Done (`benchmarks/raw_vs_guarded.py`).
 - Report P50 and P95 latency, absolute added milliseconds, overhead percentage, and the
-  slowest stage.
-- Include both clean actions and actions that produce findings or sanitization.
+  slowest stage. Done.
+- Include both clean actions and actions that produce findings or sanitization. Done.
 - Judge the PRD's 20% overhead target primarily against realistic network-backed API
   actions, while reporting absolute latency for very fast local actions.
+- Run the six detectors concurrently. Done in `DecisionEngine.evaluate()` (a thread
+  pool, not the sequential loop it replaced). **Requires `OLLAMA_NUM_PARALLEL` set
+  above its effective default of 1** - without it Ollama queues concurrent requests
+  behind a single worker and the change buys nothing. Measured 25-40% reduction in
+  live guarded P95 with `OLLAMA_NUM_PARALLEL=6`; see
+  [01, "Detector concurrency"](01-research-and-latency-budget.md#detector-concurrency-implemented-and-the-finding-behind-it)
+  for the full before/after and how this was verified against the raw Ollama API
+  before touching any AgentGate code.
 
 ## Run the benchmark
 

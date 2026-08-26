@@ -31,6 +31,13 @@ try {
 } catch {
     throw "Ollama is not responding at $HostUrl. Start it with: ollama serve"
 }
+if (-not $env:OLLAMA_NUM_PARALLEL) {
+    Write-Host "NOTE: OLLAMA_NUM_PARALLEL is not set in this shell. AgentGate dispatches its"
+    Write-Host "six detectors concurrently, but Ollama serves them one at a time unless its"
+    Write-Host "own parallelism is raised. Restart Ollama with"
+    Write-Host '  $env:OLLAMA_NUM_PARALLEL = "6"'
+    Write-Host "set BEFORE it starts, or evaluation stays as slow as the old sequential loop."
+}
 
 Write-Host "== 3/5: Pulling detector model $Model =="
 ollama pull $Model

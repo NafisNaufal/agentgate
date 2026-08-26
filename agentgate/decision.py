@@ -9,11 +9,12 @@ happen".
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable
 
 from . import risk
 from .audit import STAGE_ACTION, build_audit_store
-from .detectors import Detector, get_default_detectors
+from .detectors import Detector, Finding, get_default_detectors
 from .detectors.llm_client import LLMUnavailable
 from .policy import PolicyContext, PolicyEngine
 from .sanitizer import sanitize
@@ -70,7 +71,28 @@ class DecisionEngine:
         self.timing_sink = timing_sink
 
     def evaluate(self, req: ActionRequest, stage: str = STAGE_ACTION) -> DecisionResponse:
-        # 1. Detection
+        # 1. Detection. The six detectors are independent HTTP calls to the local
+        # model, so they are dispatched concurrently rather than one after another.
+        #
+        # This alone is not sufficient: Ollama serves one generation request at a
+        # time per model instance unless OLLAMA_NUM_PARALLEL is raised above its
+        # effective default of 1, in which case concurrent dispatch just queues
+        # behind a single worker and buys nothing. Confirmed directly against the
+        # Ollama HTTP API before touching this code: four concurrent requests with
+        # the default config completed in visibly staggered, ~0.18s-spaced
+        # intervals summing to the same wall time as four sequential requests - the
+        # signature of server-side serialization, not real parallelism.
+        #
+        # With OLLAMA_NUM_PARALLEL=6 (matching the detector count) on the same
+        # machine, live-detector P95 measured via benchmarks/raw_vs_guarded.py
+        # --live dropped 25-40% depending on case (e.g. 9682ms -> 5803ms), limited
+        # by the slowest single detector rather than the sum of all six - real but
+        # sub-linear, since six requests still share one GPU's compute. Concurrent
+        # dispatch is necessary here; OLLAMA_NUM_PARALLEL is what makes it matter.
+        #
+        # Each detector still times its own call independently via _record_timing,
+        # so per-detector P50/P95 is unaffected by running in parallel; only the
+        # overall wall-clock time improves once the server can actually overlap them.
         entities = []
         reasons: list[str] = []
         contributions: list[float] = []
@@ -78,28 +100,38 @@ class DecisionEngine:
         entity_kinds: set[str] = set()
         detector_error: str | None = None
 
-        for det in self.detectors:
-            started = time.perf_counter()
-            try:
-                finding = det.scan(req)
-            except LLMUnavailable:
-                detector_error = (
-                    "LLM detector is unavailable. Ensure Ollama is running and the "
-                    "configured model is installed."
-                )
-                break
-            except Exception:
-                detector_error = f"LLM detector {det.name!r} failed; action held for review."
-                break
-            finally:
-                self._record_timing(f"detector:{det.name}", started)
-            if not finding.triggered:
-                continue
-            entities.extend(finding.entities)
-            reasons.extend(finding.reasons)
-            contributions.append(finding.risk_contribution)
-            tags |= finding.tags
-            entity_kinds |= {e.kind for e in finding.entities}
+        if self.detectors:
+            outcomes: list[tuple[Finding | None, str | None]] = [(None, None)] * len(
+                self.detectors
+            )
+            workers = max(1, min(len(self.detectors), 32))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                future_to_index = {
+                    pool.submit(self._scan_one, det, req): index
+                    for index, det in enumerate(self.detectors)
+                }
+                for future in as_completed(future_to_index):
+                    outcomes[future_to_index[future]] = future.result()
+
+            # Detector failures still fail closed, same as the sequential engine this
+            # replaced: the first detector to fail *in registration order* sets
+            # detector_error (deterministic regardless of which thread happens to
+            # finish first), using the message that says whether the runtime itself
+            # is unavailable or one detector broke. Unlike the sequential version, a
+            # failure no longer discards findings from detectors that already
+            # completed - they ran concurrently, so their results exist whether or
+            # not a sibling detector failed, and throwing away a real finding on an
+            # unrelated detector's error would weaken the guardrail, not strengthen it.
+            for det, (finding, error) in zip(self.detectors, outcomes):
+                if error is not None and detector_error is None:
+                    detector_error = error
+                if finding is None or not finding.triggered:
+                    continue
+                entities.extend(finding.entities)
+                reasons.extend(finding.reasons)
+                contributions.append(finding.risk_contribution)
+                tags |= finding.tags
+                entity_kinds |= {e.kind for e in finding.entities}
 
         # 2. Policy
         started = time.perf_counter()
@@ -188,6 +220,21 @@ class DecisionEngine:
         finally:
             self._record_timing("audit_write", started)
         return response
+
+    def _scan_one(self, det: Detector, req: ActionRequest) -> tuple[Finding | None, str | None]:
+        """Run one detector, timed independently of the others running alongside it."""
+        started = time.perf_counter()
+        try:
+            return det.scan(req), None
+        except LLMUnavailable:
+            return None, (
+                "LLM detector is unavailable. Ensure Ollama is running and the "
+                "configured model is installed."
+            )
+        except Exception:
+            return None, f"LLM detector {det.name!r} failed; action held for review."
+        finally:
+            self._record_timing(f"detector:{det.name}", started)
 
     def _record_timing(self, stage: str, started: float) -> None:
         if self.timing_sink is None:

@@ -54,9 +54,13 @@ Install Python dependencies:
 python3 -m pip install -e ".[dev]"
 ```
 
-Start Ollama in one terminal:
+Start Ollama in one terminal. Set `OLLAMA_NUM_PARALLEL` first: AgentGate dispatches
+its six detectors concurrently, but Ollama's own default effectively serializes
+requests to a single worker, so without this the concurrent dispatch has nothing to
+parallelize against and the guardrail is no faster than the old sequential loop.
 
 ```bash
+export OLLAMA_NUM_PARALLEL=6
 ollama serve
 ```
 
@@ -92,6 +96,17 @@ export AGENTGATE_LLM_DETECTOR_TIMEOUT=30
 
 AgentGate does not automatically load `.env`; export variables in the current shell
 or use your process manager.
+
+`DecisionEngine.evaluate()` runs the six detectors concurrently rather than one after
+another, but the speedup lives on the Ollama side: `OLLAMA_NUM_PARALLEL` (set before
+starting `ollama serve`, not an AgentGate variable) controls how many requests the
+server actually serves at once. Left at its default, Ollama queues concurrent
+requests behind a single worker and the concurrency in this codebase buys nothing -
+confirmed directly against the Ollama HTTP API before this was implemented. Set it to
+at least the detector count (6) to see the benefit: measured 25-40% reduction in live
+guarded P95 on an Apple M4 with `OLLAMA_NUM_PARALLEL=6` versus the previous sequential
+loop. See [docs/ds/01](docs/ds/01-research-and-latency-budget.md) for the full
+before/after.
 
 The detector performs structured JSON classification for:
 

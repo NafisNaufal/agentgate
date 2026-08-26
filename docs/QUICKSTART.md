@@ -42,6 +42,20 @@ Ollama installs as a background service and starts on login, so there is usually
 Invoke-RestMethod http://localhost:11434/api/tags
 ```
 
+AgentGate dispatches its six detectors concurrently, but Ollama's own default
+effectively serves one request at a time, so without raising Ollama's parallelism the
+concurrent dispatch has nothing to parallelize against. Because Ollama runs as a
+background service, not a process your shell starts, a session-only `$env:` will not
+reach it - set it persistently and restart Ollama:
+
+```powershell
+setx OLLAMA_NUM_PARALLEL 6
+```
+
+Then quit Ollama from the system tray and reopen it (or sign out and back in) so it
+picks up the new value. Confirm the model is using it: `ollama ps` while a request is
+running shouldn't show requests queuing.
+
 ### 2. Install AgentGate
 
 ```powershell
@@ -182,6 +196,7 @@ git clone https://github.com/NafisNaufal/agentgate.git && cd agentgate
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 createdb agentgate
+export OLLAMA_NUM_PARALLEL=6   # set before ollama serve/pull; see note below
 ollama pull qwen2.5:7b
 
 export AGENTGATE_AUDIT_DSN="postgresql://$(whoami)@localhost:5432/agentgate"
@@ -193,7 +208,14 @@ export AGENTGATE_LLM_DETECTOR_TIMEOUT=600
 ```
 
 On Apple Silicon the detector model is GPU-accelerated, so runs are far quicker than
-on the shared server.
+on the shared server. AgentGate also dispatches its six detectors concurrently, but
+that only helps once Ollama itself is configured to serve more than one request at a
+time - its default effectively serializes them. `OLLAMA_NUM_PARALLEL` must be set in
+the environment `ollama serve` starts from (if Ollama runs as a `brew services` /
+launchd background process instead of a foreground `ollama serve`, set it with
+`launchctl setenv OLLAMA_NUM_PARALLEL 6` and restart the service). Measured 25-40%
+reduction in live guarded P95 on an Apple M4 with this set versus not; see
+[docs/ds/01](ds/01-research-and-latency-budget.md) for the numbers.
 
 ---
 

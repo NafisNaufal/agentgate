@@ -100,12 +100,52 @@ Per-stage budget for one `DecisionEngine.evaluate()`:
 which is why optimization work belongs there and nowhere else. Known levers, in the
 order they should be tried:
 
-1. Run the six classifiers concurrently rather than sequentially — the obvious win,
-   since they are independent and currently serialized.
+1. Run the six classifiers concurrently rather than sequentially — done in Sprint 2
+   (`DecisionEngine.evaluate()` dispatches all detectors on a thread pool; see below).
 2. Skip classifiers whose category cannot apply to the action type.
 3. Cache by payload hash within a run (the same text is often screened twice: once as
    a proposal, once as an observation).
-4. Smaller model, measured against the recall target before adopting.
+4. Smaller model, measured against the recall target before adopting. Rejected once
+   already: `qwen2.5:3b` runs ~8x faster but produces two distinct false results
+   (flags Python source as prompt injection; rates a plain email HIGH instead of
+   MEDIUM severity, flipping an expected SANITIZE to NEED_APPROVAL). Do not revisit
+   without re-validating against the full DA eval set.
 
-The loop already records per-step `eval_ms`, so this budget is measurable today; the
-formal harness is Sprint 2 work.
+The loop already records per-step `eval_ms`, so this budget is measurable today.
+
+### Detector concurrency: implemented, and the finding behind it
+
+Client-side concurrency alone was not the win it looked like on paper. Measured
+directly against the Ollama HTTP API, bypassing AgentGate entirely: four concurrent
+requests to a warm model completed in the same total wall time as four sequential
+ones, with each request finishing in a staggered ~0.18s-spaced sequence — the
+signature of the server queuing requests behind one worker, not serving them in
+parallel. `OLLAMA_NUM_PARALLEL` defaults effectively to 1 on memory-constrained
+hardware, and dispatching six concurrent HTTP calls into a single-slot queue buys
+nothing but scheduling overhead.
+
+`DecisionEngine.evaluate()` now dispatches all detectors on a thread pool regardless,
+because it is necessary once the server side is configured to actually serve
+concurrent requests — client-side sequencing would put a ceiling on throughput that no
+server setting could remove. **`OLLAMA_NUM_PARALLEL` must be raised (e.g. to the
+detector count, 6) for this to matter**; deployment docs should say so explicitly, not
+leave it as an unstated assumption.
+
+With `OLLAMA_NUM_PARALLEL=6` on an Apple M4, before/after via
+`benchmarks/raw_vs_guarded.py --live` (same warm model, same machine, only the client
+code changed):
+
+| Case | Guarded P95 before | Guarded P95 after | Reduction |
+|---|---|---|---|
+| clean_api_read | 7190 ms | 5382 ms | 25.1% |
+| sanitized_api_send | 9453 ms | 6083 ms | 35.7% |
+| clean_browser_open | 8486 ms | 5244 ms | 38.2% |
+| sanitized_browser_type | 9682 ms | 5803 ms | 40.1% |
+
+Real, but sub-linear rather than the naive "1/6th of the sum" a reader might expect:
+six requests still share one GPU's compute, so they overlap rather than truly run
+independently. The reduction tracks the slowest single detector (`action_intent`,
+consistently) rather than the sum of all six, which is the ceiling concurrent dispatch
+can reach on shared hardware — the remaining gap to `action_intent`'s own latency is
+where prompt/model-size work (lever 4, cautiously) would apply next, not further
+concurrency work.
