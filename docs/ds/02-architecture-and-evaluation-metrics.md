@@ -128,4 +128,6 @@ the independent denominator for detector recall. Task success is not reported by
 runner because its cases are dry-run proposals and do not execute a real task. The
 runner's approval-routing denominator is the set of cases expected to produce
 `NEED_APPROVAL` or `ASK_USER`; expected `BLOCK` cases are safety-blocking cases, not
-approval-routing cases.
+approval-routing cases. Audit completeness is reported with `scope = selected_run`,
+because the current audit-store contract reports action rows for the run rather than
+partitioning them by expectation source.

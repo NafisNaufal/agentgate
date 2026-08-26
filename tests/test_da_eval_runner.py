@@ -81,25 +81,25 @@ def _response(
 class TestDAEvaluationRunner(unittest.TestCase):
     def test_reports_prd_metrics_and_separates_inferred_expectations(self) -> None:
         cases = [
-            _case("SAFE", "safe", "ALLOW", "LOW"),
-            _case("UNSAFE", "unsafe", "BLOCK", "CRITICAL"),
-            _case("APPROVAL", "approval", "NEED_APPROVAL", "HIGH"),
-            _case("BENIGN", "benign", "ALLOW", "LOW"),
-            _case("SENSITIVE", "sensitive", "BLOCK", "CRITICAL", entity_kinds=["EMAIL"]),
-            _case("INFERRED", "inferred", "ALLOW", "LOW", source="inferred"),
+            _case("SAFE", "API_CALL", "ALLOW", "LOW"),
+            _case("UNSAFE", "FILE_READ", "BLOCK", "CRITICAL"),
+            _case("APPROVAL", "BROWSER_SUBMIT", "NEED_APPROVAL", "HIGH"),
+            _case("BENIGN", "BROWSER_OPEN", "ALLOW", "LOW"),
+            _case("SENSITIVE", "FILE_DELETE", "BLOCK", "CRITICAL", entity_kinds=["EMAIL"]),
+            _case("INFERRED", "BROWSER_CLICK", "ALLOW", "LOW", source="inferred"),
         ]
         engine = FakeDecisionEngine(
             {
-                "safe": _response(Decision.ALLOW, RiskLevel.LOW, policies=["policy.used"]),
-                "unsafe": _response(Decision.ALLOW, RiskLevel.LOW),
-                "approval": _response(Decision.ASK_USER, RiskLevel.MEDIUM),
-                "benign": _response(Decision.BLOCK, RiskLevel.CRITICAL),
-                "sensitive": _response(
+                "API_CALL": _response(Decision.ALLOW, RiskLevel.LOW, policies=["policy.used"]),
+                "FILE_READ": _response(Decision.ALLOW, RiskLevel.LOW),
+                "BROWSER_SUBMIT": _response(Decision.ASK_USER, RiskLevel.MEDIUM),
+                "BROWSER_OPEN": _response(Decision.BLOCK, RiskLevel.CRITICAL),
+                "FILE_DELETE": _response(
                     Decision.BLOCK,
                     RiskLevel.CRITICAL,
                     entities=[SensitiveEntity("EMAIL", "[REDACTED_EMAIL]", "test")],
                 ),
-                "inferred": _response(Decision.ALLOW, RiskLevel.LOW),
+                "BROWSER_CLICK": _response(Decision.ALLOW, RiskLevel.LOW),
             }
         )
 
@@ -126,9 +126,9 @@ class TestDAEvaluationRunner(unittest.TestCase):
         self.assertEqual(report["metrics_by_expectation_source"]["inferred"]["total"], 1)
 
     def test_risk_mismatch_is_a_failed_case_and_json_safe(self) -> None:
-        cases = [_case("RISK", "risk", "ALLOW", "LOW")]
+        cases = [_case("RISK", "API_CALL", "ALLOW", "LOW")]
         engine = FakeDecisionEngine(
-            {"risk": _response(Decision.ALLOW, RiskLevel.MEDIUM)}
+            {"API_CALL": _response(Decision.ALLOW, RiskLevel.MEDIUM)}
         )
 
         report = evaluate_cases(cases, engine)
@@ -152,14 +152,24 @@ class TestDAEvaluationRunner(unittest.TestCase):
 
     def test_audit_metric_failure_fails_the_run(self) -> None:
         engine = FakeDecisionEngine(
-            {"safe": _response(Decision.ALLOW, RiskLevel.LOW)}
+            {"API_CALL": _response(Decision.ALLOW, RiskLevel.LOW)}
         )
         engine.audit_store = BrokenAuditStore()
 
-        report = evaluate_cases([_case("SAFE", "safe", "ALLOW", "LOW")], engine)
+        report = evaluate_cases([_case("SAFE", "API_CALL", "ALLOW", "LOW")], engine)
 
         self.assertFalse(report["ok"])
         self.assertIn("audit read failed", report["metrics"]["audit_completeness"]["error"])
+
+    def test_unknown_action_type_is_an_invalid_case(self) -> None:
+        engine = FakeDecisionEngine({})
+        case = _case("INVALID", "NOT_AN_ACTION", "ALLOW", "LOW")
+
+        report = evaluate_cases([case], engine)
+
+        self.assertFalse(report["ok"])
+        self.assertIn("unknown action_type", report["cases"][0]["error"])
+        self.assertEqual(engine.requests, [])
 
 
 if __name__ == "__main__":

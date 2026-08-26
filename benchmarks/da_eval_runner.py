@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from agentgate.audit import AuditUnavailable  # noqa: E402
 from agentgate.decision import DecisionEngine  # noqa: E402
-from agentgate.schemas import ActionRequest, Decision, RiskLevel  # noqa: E402
+from agentgate.schemas import ACTION_TYPES, ActionRequest, Decision, RiskLevel  # noqa: E402
 
 _APPROVAL_DECISIONS = {"NEED_APPROVAL", "ASK_USER"}
 _DECISIONS = {decision.value for decision in Decision}
@@ -105,32 +105,18 @@ def evaluate_cases(cases: list[dict[str, Any]], engine: Any) -> dict[str, Any]:
         }
     )
 
-    metrics = _metrics_for(results, len(results))
-    metrics.update(
-        {
-            "policy_coverage": _policy_coverage(completed, all_policy_ids),
-            "guardrail_evaluation_latency_ms": _latency_metrics(completed),
-            "audit_completeness": _audit_completeness(engine),
-            "task_success": None,
-        }
-    )
+    audit_metric = _audit_completeness(engine)
+    metrics = _complete_metrics(results, len(results), all_policy_ids, audit_metric)
     approved_results = sources["da_approved"]
-    headline_metrics = _metrics_for(approved_results, len(approved_results))
-    headline_metrics.update(
-        {
-            "policy_coverage": _policy_coverage(approved_results, all_policy_ids),
-            "guardrail_evaluation_latency_ms": _latency_metrics(
-                [result for result in approved_results if "error" not in result]
-            ),
-            "audit_completeness": metrics["audit_completeness"],
-            "task_success": None,
-        }
+    headline_metrics = _complete_metrics(
+        approved_results, len(approved_results), all_policy_ids, audit_metric
     )
-    audit_metric = metrics["audit_completeness"]
     source_metrics = {
         source: {
             "total": len(source_results),
-            "metrics": _metrics_for(source_results, len(source_results)),
+            "metrics": _complete_metrics(
+                source_results, len(source_results), all_policy_ids, audit_metric
+            ),
         }
         for source, source_results in sources.items()
         if source_results
@@ -185,6 +171,28 @@ def _validate_case(case: dict[str, Any]) -> None:
         raise ValueError("expected_entity_kinds must be a list of strings")
     if not isinstance(case["action_request"], dict):
         raise ValueError("action_request must be an object")
+    action_type = case["action_request"].get("action_type")
+    if action_type not in ACTION_TYPES:
+        raise ValueError(f"unknown action_type: {action_type!r}")
+
+
+def _validate_dataset(cases: list[dict[str, Any]]) -> None:
+    if len(cases) != 26:
+        raise ValueError(f"DA evaluation set must contain 26 cases, found {len(cases)}")
+    ids = [case.get("id") for case in cases]
+    if len(set(ids)) != len(ids):
+        raise ValueError("DA evaluation set contains duplicate case ids")
+    for case in cases:
+        _validate_case(case)
+    source_counts = {
+        source: sum(case["expectation_source"] == source for case in cases)
+        for source in _EXPECTATION_SOURCES
+    }
+    if source_counts != {"da_approved": 19, "inferred": 7}:
+        raise ValueError(
+            "DA evaluation set must contain 19 da_approved and 7 inferred cases; "
+            f"found {source_counts}"
+        )
 
 
 def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
@@ -236,6 +244,26 @@ def _metrics_for(results: list[dict[str, Any]], total: int) -> dict[str, Any]:
     }
 
 
+def _complete_metrics(
+    results: list[dict[str, Any]],
+    total: int,
+    all_policy_ids: set[str],
+    audit_metric: dict[str, Any],
+) -> dict[str, Any]:
+    metrics = _metrics_for(results, total)
+    metrics.update(
+        {
+            "policy_coverage": _policy_coverage(results, all_policy_ids),
+            "guardrail_evaluation_latency_ms": _latency_metrics(
+                [result for result in results if "error" not in result]
+            ),
+            "audit_completeness": audit_metric,
+            "task_success": None,
+        }
+    )
+    return metrics
+
+
 def _ratio(numerator: int, denominator: int) -> dict[str, Any]:
     return {
         "value": round(numerator / denominator, 4) if denominator else None,
@@ -278,11 +306,19 @@ def _policy_coverage(results: list[dict[str, Any]], all_policy_ids: set[str]) ->
 def _audit_completeness(engine: Any) -> dict[str, Any]:
     completeness = getattr(getattr(engine, "audit_store", None), "completeness", None)
     if not callable(completeness):
-        return {"value": None, "error": "audit store does not expose completeness()"}
+        return {
+            "value": None,
+            "scope": "selected_run",
+            "error": "audit store does not expose completeness()",
+        }
     try:
-        return {"value": completeness()}
+        return {"value": completeness(), "scope": "selected_run"}
     except Exception as exc:
-        return {"value": None, "error": f"{type(exc).__name__}: {exc}"}
+        return {
+            "value": None,
+            "scope": "selected_run",
+            "error": f"{type(exc).__name__}: {exc}",
+        }
 
 
 def main() -> int:
@@ -301,6 +337,7 @@ def main() -> int:
     try:
         data = json.loads((ROOT / "benchmarks" / "data" / "da_eval_set.json").read_text())
         cases = data["cases"]
+        _validate_dataset(cases)
         if args.case:
             cases = [case for case in cases if any(needle in case["id"] for needle in args.case)]
             if not cases:
@@ -346,9 +383,14 @@ def _print_single_case(case: dict[str, Any], report: dict[str, Any]) -> None:
         print(f"  triggered_policies: {case['triggered_policies']}")
     if case["sanitized_payload"]:
         print(f"  sanitized_payload: {case['sanitized_payload']!r}")
-    _print_metric_summary(
-        report["headline_metrics"], heading="Headline metrics (DA-approved)"
-    )
+    source = case["expectation_source"]
+    if source == "da_approved":
+        metrics = report["headline_metrics"]
+        heading = "Headline metrics (DA-approved)"
+    else:
+        metrics = report["metrics_by_expectation_source"][source]["metrics"]
+        heading = "Provisional metrics (inferred)"
+    _print_metric_summary(metrics, heading=heading)
 
 
 def _print_table(report: dict[str, Any]) -> None:
