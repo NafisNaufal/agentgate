@@ -119,3 +119,10 @@ The metrics DS is measured on, with where each is computed.
 The loop also screens the task text, terminal messages, and executor output; those are
 recorded under `task_screen`, `terminal_screen`, and `observation_screen` so they do
 not inflate any of the rates above.
+
+The DA runner compares both `expected_decision` and `expected_risk_level` for every case.
+Each case also declares `expectation_source` as either `da_approved` or `inferred`; the
+19 DA-approved cases form the headline decision metrics and the 7 inferred cases are
+reported separately. Sensitive cases declare `expected_entity_kinds`, which supplies
+the independent denominator for detector recall. Task success is not reported by this
+runner because its cases are dry-run proposals and do not execute a real task.

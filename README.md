@@ -383,6 +383,26 @@ Live mode still uses the in-process executor, so it never sends API requests or 
 browser. It writes benchmark audit rows to the configured Postgres database; use an
 isolated benchmark database, not a production audit store.
 
+### DA Evaluation Runner
+
+The DA evaluation runner replays the 26-case independent evaluation set through the
+production `DecisionEngine`. It compares both the expected decision and risk level, then
+reports unsafe auto-allow rate, sensitive-data detector recall, approval routing accuracy,
+false block rate, policy coverage, evaluation latency, and audit completeness. Task
+success is reported as unavailable because these cases are dry-run action proposals and
+do not execute real tasks.
+
+```bash
+python3 benchmarks/da_eval_runner.py
+python3 benchmarks/da_eval_runner.py --case DATA-03
+python3 benchmarks/da_eval_runner.py --json > artifacts/da-eval.json
+```
+
+The headline metrics use the 19 cases marked `da_approved`; the 7 cases marked
+`inferred` are reported separately because their expected values were reconstructed from
+the checklist. A run exits `1` for any decision mismatch, risk mismatch, invalid case,
+or evaluation error, and exits `0` only when every selected case matches both fields.
+
 ## Security Notes
 
 - In production guarded execution, no executor is called before `DecisionEngine.evaluate()`.
