@@ -1,8 +1,8 @@
 # AgentGate — Data Science Design Docs
 
 Design and research artifacts for the DS column of the AgentGate PRD, Phase 0 through
-Sprint 1B. These record the decisions behind the code in `agentgate/`; the PRD itself
-is the source of scope and is kept out of this repository.
+Sprint 2. These record the decisions behind the code in `agentgate/`; the PRD remains
+the source of scope.
 
 | Doc | PRD sprint | Covers |
 |---|---|---|
@@ -10,6 +10,7 @@ is the source of scope and is kept out of this repository.
 | [01 — Detector baseline, scoring & latency budget](01-research-and-latency-budget.md) | Phase 1 (Jun 22–28) | Regex → hybrid → full-LLM detector decision, noisy-OR risk scoring, decision resolution, per-stage latency budget |
 | [02 — Architecture, contracts & evaluation metrics](02-architecture-and-evaluation-metrics.md) | Phase 2 (Jun 29–Jul 5) | Loop architecture, action vocabulary, ActionRequest/DecisionResponse schemas, tool registry, evaluation metrics |
 | [03 — CLI contract, I/O formats & benchmark plan](03-cli-contract-and-benchmark-plan.md) | Phase 3 (Jul 6–12) | CLI demo contract, scenario input format, decision output format, raw-vs-guarded benchmark plan |
+| [04 — Sprint 2 DS focus](04-sprint-2-focus.md) | Sprint 2 (Aug 10–23) | Evaluation scripts, detector and tool-call tests, scenario contracts, latency profiling, raw-vs-guarded benchmark harness |
 
 ## Sprint 1 and 1B
 
@@ -36,12 +37,11 @@ All five decision outputs — `ALLOW`, `BLOCK`, `NEED_APPROVAL`, `SANITIZE`,
 `ASK_USER` — are exercised by the test suite and by the three pilot scenarios
 (booking, code protection, productivity), per the Sprint 1B DS row.
 
-## Out of scope before Sprint 2
+## Sprint 2 boundary
 
-Deliberately not built yet, per the PRD milestone table:
+Sprint 2 work is described in [04 — Sprint 2 DS focus](04-sprint-2-focus.md). The
+following remain outside the DS Sprint 2 focus or are deliberately deferred:
 
-- Latency profiler and raw-vs-guarded benchmark **harness** (Sprint 2 DS) — the
-  *plan* is in doc 03, and the loop already records per-step `eval_ms`.
 - Approval **queue** with reviewer state (Sprint 2+). Sprint 1B requires the
   `NEED_APPROVAL` routing decision, which exists; the queue and reviewer workflow are
   FE/DE surfaces.

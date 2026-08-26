@@ -90,6 +90,11 @@ Run status values: `dry_run_complete` (every step `ALLOW`) ·
 The plan; the harness itself is Sprint 2 (PRD DS row: "latency profiler, and
 raw-vs-guarded benchmark harness").
 
+The implemented harness is `benchmarks/raw_vs_guarded.py`. It has a deterministic
+offline mode for CI and an explicit `--live` mode for the real detector and audit path.
+Both modes use the four cases below, compare direct executor calls with
+`evaluate()` -> route -> executor, and emit table or JSON reports.
+
 **Question.** Does routing every tool call through AgentGate cost enough to make the
 agent feel slow? PRD target: guarded API actions add **≤ 20%** over raw execution.
 
