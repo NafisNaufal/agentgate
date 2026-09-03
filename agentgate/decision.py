@@ -32,7 +32,10 @@ _RANK = {
 # wasn't confident, so intent should be clarified before a human reviews a risk score
 # computed from a guess.
 _LOW_CONFIDENCE_THRESHOLD = 0.75
-_CONFIDENCE_GATED_TYPES = {"API_CALL", "BROWSER_SUBMIT", "BROWSER_CLICK", "BROWSER_TYPE"}
+_CONFIDENCE_GATED_TYPES = {
+    "API_CALL", "BROWSER_SUBMIT", "BROWSER_CLICK", "BROWSER_TYPE",
+    "FILE_WRITE", "FILE_DELETE",
+}
 
 _NEXT_STEP = {
     Decision.ALLOW: "execute",

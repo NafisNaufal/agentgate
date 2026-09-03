@@ -16,8 +16,8 @@
       "domains": ["productivity"],
       "risk_hints_any": ["external_send"],
       "decision": "NEED_APPROVAL",
-      "risk_floor": "MEDIUM",
-      "reason": "External email send requires owner approval"
+      "risk_floor": "HIGH",
+      "reason": "External send to a recipient outside the organization requires owner approval"
     },
     {
       "id": "prod.calendar_write",

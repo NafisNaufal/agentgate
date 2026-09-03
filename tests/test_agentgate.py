@@ -150,6 +150,20 @@ class TestDecisionEngine(unittest.TestCase):
             payload_summary="archive 320 emails", risk_hint=["bulk_action"]))
         self.assertEqual(d.decision, Decision.NEED_APPROVAL)
 
+    def test_external_email_send_risk_is_high_not_medium(self):
+        # Sprint 3 calibration fix: prod.external_email_send floored at MEDIUM
+        # while DA's own directly-authored eval cases (PROD-08, Telegram) expect
+        # HIGH for any external send. The decision was already NEED_APPROVAL either
+        # way; only the risk_floor was wrong, understating a real external-send risk.
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="productivity", target_system="Telegram",
+            tool_name="telegram_send_message",
+            payload_summary="send message to external recipient via Telegram Bot API",
+            risk_hint=["external_send"], confidence=0.91))
+        self.assertEqual(d.decision, Decision.NEED_APPROVAL)
+        self.assertEqual(d.risk_level, RiskLevel.HIGH)
+        self.assertIn("prod.external_email_send", d.triggered_policies)
+
     def test_pii_external_sanitizes(self):
         d = self.engine.evaluate(AR(
             action_type="BROWSER_TYPE", domain="booking_style", target="1",
@@ -179,6 +193,21 @@ class TestDecisionEngine(unittest.TestCase):
             action_type="API_CALL", domain="productivity", tool_name="gmail_mark_read",
             payload_summary="mark_as_read query=is:unread affected_items=2400", confidence=0.60))
         self.assertEqual(d.decision, Decision.ASK_USER)
+
+    def test_low_confidence_file_mutation_asks_user_not_approval(self):
+        # FILE_WRITE/FILE_DELETE were added to the action space after
+        # _CONFIDENCE_GATED_TYPES was written and were never added to it, so a
+        # low-confidence file mutation skipped the same low-confidence-clarifies-
+        # first treatment every other impactful verb gets. code.local_file_write/
+        # delete always route to NEED_APPROVAL regardless of confidence, so this
+        # only shows up as the final ASK_USER downgrade, not a change in whether
+        # the action is gated at all.
+        for action_type, target in (("FILE_WRITE", "config.py"), ("FILE_DELETE", "build/old.o")):
+            with self.subTest(action_type=action_type):
+                d = self.engine.evaluate(AR(
+                    action_type=action_type, domain="code_security", target=target,
+                    confidence=0.3))
+                self.assertEqual(d.decision, Decision.ASK_USER)
 
     def test_high_confidence_bulk_action_still_needs_approval(self):
         d = self.engine.evaluate(AR(
@@ -309,6 +338,30 @@ class TestLoop(unittest.TestCase):
                 DecisionRouter(execute=True),
             ).run("control step")
             self.assertEqual(result.status, expected)
+
+    def test_control_actions_are_audited(self):
+        """PRD F14 requires every proposed action to be audited. A planner explicitly
+        proposing ASK_USER/NEED_APPROVAL builds its DecisionResponse directly rather
+        than through DecisionEngine.evaluate() (that path is deliberately fixed, not
+        detector-driven), which used to mean it got no audit_id and no Postgres row -
+        the action simply never appeared in the audit trail at all."""
+        from tests.fake_audit import FakeAuditStore
+
+        for action_type, arguments in (
+            ("ASK_USER", {"question": "Continue?"}),
+            ("NEED_APPROVAL", {"action_description": "Publish"}),
+        ):
+            store = FakeAuditStore()
+            result = AgentLoop(
+                ReplayPlanner([{"action_type": action_type, "arguments": arguments}]),
+                decider=DecisionEngine(detectors=[], audit_store=store),
+            ).run("control step")
+            step = result.steps[0]
+            self.assertTrue(step.decision.audit_id, f"{action_type} produced no audit_id")
+            self.assertIsNotNone(step.request, f"{action_type} step has no request attached")
+            audited = store.get(step.decision.audit_id)
+            self.assertIsNotNone(audited, f"{action_type} decision was never written to the audit store")
+            self.assertEqual(audited["stage"], "action")
 
     def test_every_decision_output_is_reachable_from_a_scenario(self):
         """Sprint 1B requires all five decisions validated end to end.

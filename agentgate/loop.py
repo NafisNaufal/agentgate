@@ -184,14 +184,29 @@ class AgentLoop:
                 break
 
             if proposal.action_type in {"ASK_USER", "NEED_APPROVAL"}:
+                # Deliberately not run through self.decider.evaluate(): a planner
+                # explicitly proposing ASK_USER/NEED_APPROVAL is a control step, not
+                # a tool call with a payload worth six detector calls over. But it is
+                # still a proposed action, and PRD F14 requires every one to be
+                # audited - control_decision is constructed directly rather than by
+                # evaluate(), so it never got an audit_id or a Postgres row on its
+                # own. Audit it explicitly instead of re-deriving it through the full
+                # pipeline, which would risk changing behavior this path intentionally
+                # keeps fixed (ASK_USER/NEED_APPROVAL always route the same way,
+                # regardless of what the six detectors would say about the text).
+                control_request = proposal.to_action_request(self.tool_registry)
                 control_decision = _control_decision(proposal)
-                outcome = self.router.route(
-                    proposal.to_action_request(self.tool_registry),
-                    control_decision,
-                )
+                self.decider.audit_store.record(control_request, control_decision)
+                outcome = self.router.route(control_request, control_decision)
                 self._record(
                     result,
-                    StepRecord(i, proposal, decision=control_decision, outcome=outcome),
+                    StepRecord(
+                        i,
+                        proposal,
+                        request=control_request,
+                        decision=control_decision,
+                        outcome=outcome,
+                    ),
                 )
                 result.status = outcome.status
                 result.final_message = outcome.message
