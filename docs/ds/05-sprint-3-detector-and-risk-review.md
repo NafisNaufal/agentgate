@@ -152,16 +152,18 @@ design deliberately routes these to a human instead (`docs/ds/01`: "route to a h
 rather than block, except where the signal is unambiguous"). The eval now puts a
 precise number on it rather than a general impression.
 
-**This needs a decision, not a silent code change**, because fixing it means either:
-
-- **(a)** Raise `code.source_code_egress` and `code.env_file_access` to
-  `risk_floor: CRITICAL` and `decision: BLOCK` — a real behavior change: confirmed
-  source-code-to-external-destination and bare `.env` reads would stop being
-  reviewable by a human and become unconditional blocks. PROD-09 (Stripe links) would
-  need a new higher-severity payment-content policy, not just a floor bump, since
-  `PAYMENT_CONTENT` capping at HIGH is a detector-severity ceiling.
-- **(b)** Leave as-is and treat these four as accepted calibration differences between
-  the DA eval set and the current design, revisited later if the tradeoff changes.
+**Decided 2026-09-04: keep `NEED_APPROVAL`, do not raise to `BLOCK`/`CRITICAL`.**
+A human reviews source-code egress, bare `.env` access, and payment-link sends before
+anything happens, rather than an unconditional auto-block with no override in the
+loop - consistent with the design philosophy already documented in `docs/ds/01`
+("route to a human rather than block, except where the signal is unambiguous"). These
+four DA-approved cases are recorded as an accepted calibration difference between the
+DA eval set and the current design, not a defect. If this tradeoff is revisited later,
+the concrete change would be: raise `code.source_code_egress` and
+`code.env_file_access` to `risk_floor: CRITICAL` / `decision: BLOCK`, and give
+`PAYMENT_CONTENT` a path to `CRITICAL` severity (it is currently hardcoded at `HIGH`,
+a detector-severity ceiling, not just a policy-floor one) — but that is not this
+sprint's call.
 
 ## Lower-priority, not acted on
 
