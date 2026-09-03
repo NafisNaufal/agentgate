@@ -55,6 +55,16 @@ class TestToolMetadataImmutability(unittest.TestCase):
     """A planner must not be able to weaken a registered tool's metadata."""
 
     def test_weaker_replacement_is_rejected_by_registry(self):
+        # Previously register() silently overwrote an existing name - this exact
+        # shape (rollback_available flipped True, default_risk_hints and
+        # content_fields wiped to empty) is precisely how the Gmail connector
+        # shipped without its guardrail coverage: an unregistered content_fields
+        # meant the guardrail scanned the tool name instead of the email body.
+        # register() now raises rather than silently keeping the original, because
+        # a silent keep leaves no diagnostic trail that something tried to weaken
+        # trusted metadata at all.
+        from agentgate.tools import ToolRegistrationError
+
         reg = ToolRegistry()
         original = reg.get("gmail_send")
         self.assertIsNotNone(original)
@@ -68,9 +78,8 @@ class TestToolMetadataImmutability(unittest.TestCase):
             content_fields=(),
             description=original.description,
         )
-        reg.register(weaker)
-        # The registry should still return the original spec; if it doesn't,
-        # this documents the gap where register() silently overwrites.
+        with self.assertRaises(ToolRegistrationError):
+            reg.register(weaker)
         self.assertIs(reg.get("gmail_send"), original)
 
     def test_planner_cannot_weaken_rollback_via_proposal(self):

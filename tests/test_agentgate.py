@@ -232,9 +232,24 @@ class TestToolRegistryDefinition(unittest.TestCase):
         self.assertFalse(reg.is_registered("made_up_tool"))
 
     def test_register_new_tool(self):
+        # A genuinely new name, not a default (github_read_file already exists as
+        # one - this test used to accidentally re-register it, silently downgrading
+        # its content_fields to () and masking exactly the immutability gap the
+        # ToolRegistrationError tests below now cover).
         reg = ToolRegistry()
-        reg.register(ToolSpec("github_read_file", "GitHub"))
-        self.assertTrue(reg.is_registered("github_read_file"))
+        reg.register(ToolSpec("acme_custom_tool", "Acme", content_fields=("body",)))
+        self.assertTrue(reg.is_registered("acme_custom_tool"))
+        self.assertEqual(reg.get("acme_custom_tool").content_fields, ("body",))
+
+    def test_register_rejects_overwriting_an_existing_tool(self):
+        from agentgate.tools import ToolRegistrationError
+
+        reg = ToolRegistry()
+        original = reg.get("github_read_file")
+        with self.assertRaises(ToolRegistrationError):
+            reg.register(ToolSpec("github_read_file", "GitHub"))
+        # Rejected outright, not silently absorbed - the original is untouched.
+        self.assertIs(reg.get("github_read_file"), original)
 
 
 class TestPolicyValidation(unittest.TestCase):
