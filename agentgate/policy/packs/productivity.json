@@ -7,8 +7,17 @@
       "description": "Bulk operation over many items (e.g. archive 320 emails).",
       "risk_hints_any": ["bulk_action"],
       "decision": "NEED_APPROVAL",
+      "risk_floor": "MEDIUM",
+      "reason": "Bulk operation affects many items; requires approval"
+    },
+    {
+      "id": "prod.bulk_action_no_rollback",
+      "description": "Bulk operation over many items that cannot be undone (e.g. bulk permanent delete).",
+      "risk_hints_any": ["bulk_action"],
+      "requires_no_rollback": true,
+      "decision": "NEED_APPROVAL",
       "risk_floor": "HIGH",
-      "reason": "Bulk operation affects many items and is hard to undo; requires approval"
+      "reason": "Bulk operation affects many items and cannot be undone; requires approval"
     },
     {
       "id": "prod.external_email_send",

@@ -130,3 +130,30 @@ class TestSecretDetectorOpaqueIdentifiers(unittest.TestCase):
         finding = LLMSecretDetector().scan(req)
         self.assertFalse(finding.triggered)
 
+
+@unittest.skipUnless(os.environ.get("RUN_REAL_LLM"), "Real LLM test requires RUN_REAL_LLM=1")
+class TestActionIntentDraftVsSent(unittest.TestCase):
+    """Regression for RSV-03 (DA eval, da_approved): the action-intent classifier had
+    no instruction distinguishing a message being composed from one actually being
+    transmitted, so 'draft a reply to the hotel... not submitted' (a BROWSER_TYPE, not
+    yet sent) was classified is_external_send=true purely from the word 'reply to the
+    hotel', pushing a routine draft to MEDIUM instead of the DA-approved LOW/ALLOW.
+    Fixed by having the prompt look for explicit not-yet-sent language ('draft',
+    'not submitted', ...) rather than inferring intent from the eventual recipient."""
+
+    def test_a_draft_that_has_not_been_sent_is_not_an_external_send(self):
+        text = "draft reply to hotel about late check-in, not submitted"
+        req = ActionRequest(action_type="BROWSER_TYPE", payload_summary=text, raw_payload=text)
+        finding = LLMActionIntentDetector().scan(req)
+        self.assertNotIn(
+            "external_send",
+            finding.tags,
+            f"an unsent draft was classified as an external send: {finding.reasons}",
+        )
+
+    def test_an_actual_send_is_still_caught(self):
+        text = "send the drafted reply to the hotel now"
+        req = ActionRequest(action_type="API_CALL", payload_summary=text, raw_payload=text)
+        finding = LLMActionIntentDetector().scan(req)
+        self.assertIn("external_send", finding.tags, "a real send was not caught")
+

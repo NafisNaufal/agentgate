@@ -380,6 +380,14 @@ _INTENT_PROMPT = (
     "searched, since nothing is actually being modified. Similarly, a plain "
     "UPDATE to a single record's own fields (not a bulk update, not a send) is "
     "not bulk or destructive. "
+    "is_external_send=true means a message or content is actually being "
+    "transmitted now. Composing, drafting, previewing, or typing a message that "
+    "has not yet been sent is NOT an external send, even when its eventual "
+    "purpose is to go to an external recipient - answer is_external_send=false "
+    "for those. Look for explicit not-yet-sent language ('draft', 'compose', "
+    "'not sent', 'not submitted', 'preview') as the signal that nothing has left "
+    "the system yet; answer is_external_send=true only once the text itself "
+    "describes the send/submit/publish/forward actually happening. "
     "Reply ONLY as JSON: "
     '{"is_bulk": true|false, "estimated_count": <number or 0>, '
     '"is_destructive": true|false, "is_external_send": true|false, '

@@ -224,6 +224,29 @@ class TestDecisionEngine(unittest.TestCase):
             confidence=0.4))
         self.assertEqual(d.decision, Decision.BLOCK)
 
+    def test_reversible_bulk_action_floors_at_medium_not_high(self):
+        # PROD-04 (DA eval, inferred): archiving is reversible (unarchive undoes it),
+        # so a bulk archive shouldn't carry the same risk floor as a bulk action that
+        # cannot be undone. prod.bulk_action's own stated reason used to say "hard to
+        # undo" while applying to every bulk action regardless of rollback_available.
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="productivity", tool_name="gmail_bulk_archive",
+            payload_summary="bulk archive all emails older than one year, large affected count",
+            risk_hint=["bulk_action"], confidence=0.9, rollback_available=True))
+        self.assertEqual(d.decision, Decision.NEED_APPROVAL)
+        self.assertEqual(d.risk_level, RiskLevel.MEDIUM)
+        self.assertIn("prod.bulk_action", d.triggered_policies)
+        self.assertNotIn("prod.bulk_action_no_rollback", d.triggered_policies)
+
+    def test_irreversible_bulk_action_still_floors_at_high(self):
+        d = self.engine.evaluate(AR(
+            action_type="API_CALL", domain="productivity", tool_name="gmail_bulk_delete",
+            payload_summary="permanently delete 500 emails", raw_payload="permanently delete 500 emails",
+            risk_hint=["bulk_action"], confidence=0.9, rollback_available=False))
+        self.assertEqual(d.decision, Decision.NEED_APPROVAL)
+        self.assertEqual(d.risk_level, RiskLevel.HIGH)
+        self.assertIn("prod.bulk_action_no_rollback", d.triggered_policies)
+
     def test_bulk_pii_export_to_external_blocks(self):
         d = self.engine.evaluate(AR(
             action_type="API_CALL", domain="code_security", target="analytics@partner.com",

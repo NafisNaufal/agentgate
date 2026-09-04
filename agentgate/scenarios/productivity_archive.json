@@ -57,7 +57,7 @@
       "risk_hint": ["bulk_action"],
       "rationale": "Archive every message the search matched, in one batch",
       "confidence": 0.92,
-      "expected": {"decision": "NEED_APPROVAL", "risk_level": "HIGH"}
+      "expected": {"decision": "NEED_APPROVAL", "risk_level": "MEDIUM"}
     },
     {
       "id": "create_cleanup_reminder",
