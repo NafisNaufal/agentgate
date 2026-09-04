@@ -73,6 +73,38 @@ class DecisionRouter:
                 "Allowed; dry-run mode did not execute the action",
             )
 
+        return self._finish_execution(req, decision, arguments)
+
+    def execute_after_human_approval(
+        self,
+        req: ActionRequest,
+        decision: DecisionResponse,
+        arguments: Mapping[str, Any] | None,
+    ) -> EnforcementOutcome:
+        """Execute a NEED_APPROVAL/ASK_USER action after a synchronous human 'yes' in
+        this same session - the interactive chat's equivalent of Claude Code's own
+        tool-permission prompt. route() never does this on its own: a bare NEED_APPROVAL
+        or ASK_USER decision always routes to a pending status regardless of
+        execution_enabled, by design. BLOCK can never be approved around this way.
+        """
+        if decision.decision not in {Decision.NEED_APPROVAL, Decision.ASK_USER}:
+            raise ValueError(
+                "execute_after_human_approval is only for NEED_APPROVAL/ASK_USER decisions, "
+                f"got {decision.decision}"
+            )
+        if not self.execution_enabled:
+            return EnforcementOutcome(
+                "would_execute",
+                "Approved; dry-run mode did not execute the action",
+            )
+        return self._finish_execution(req, decision, arguments)
+
+    def _finish_execution(
+        self,
+        req: ActionRequest,
+        decision: DecisionResponse,
+        arguments: Mapping[str, Any] | None,
+    ) -> EnforcementOutcome:
         if arguments is None:
             result = ExecutionResult(
                 False,

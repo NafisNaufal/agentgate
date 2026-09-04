@@ -1,16 +1,17 @@
-"""AgentGate CLI demo (Sprint 1).
+"""AgentGate CLI (Sprint 1-3).
 
 Commands:
   list              list available scenarios
   tools             list the registered tool catalog
   run <scenario>    run a scenario through the full decision engine
   eval              evaluate a single ad-hoc action
+  chat              interactive chat REPL, guarded by AgentGate turn by turn
   google-auth       run the Google OAuth consent flow for the Gmail executor
-  serve             start the web Demo Console
 
 The guardrail always uses the full local-LLM detector suite via Ollama. The planner
-is a separate layer: it defaults to deterministic scenario replay, and ``run
---planner llm`` swaps in a live remote LLM planner without changing the guardrail.
+is a separate layer: ``run`` defaults to deterministic scenario replay, and ``run
+--planner llm`` / ``chat`` swap in a live LLM planner (local via Ollama or a remote
+API) without changing the guardrail underneath it.
 """
 
 from __future__ import annotations
@@ -212,17 +213,11 @@ def cmd_google_auth(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_serve(args: argparse.Namespace) -> int:
-    """Start the Demo Console. Requires AGENTGATE_WEB_PASSWORD."""
-    from .web.auth import AuthNotConfigured
-    from .web.app import serve
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Start the interactive chat REPL."""
+    from .chat import run_chat
 
-    try:
-        serve(host=args.host, port=args.port)
-    except AuthNotConfigured as exc:
-        print(_c("BLOCK", str(exc)), file=sys.stderr)
-        return 1
-    return 0
+    return run_chat(execute=not args.no_execute)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -252,10 +247,13 @@ def build_parser() -> argparse.ArgumentParser:
         "google-auth", help="run the Google OAuth consent flow for the Gmail executor"
     ).set_defaults(func=cmd_google_auth)
 
-    w = sub.add_parser("serve", help="start the web Demo Console")
-    w.add_argument("--host", default="127.0.0.1", help="bind address (default: loopback only)")
-    w.add_argument("--port", type=int, default=8080)
-    w.set_defaults(func=cmd_serve)
+    c = sub.add_parser("chat", help="interactive chat REPL, guarded by AgentGate turn by turn")
+    c.add_argument(
+        "--no-execute",
+        action="store_true",
+        help="dry-run only; never perform real actions even for ALLOW/SANITIZE",
+    )
+    c.set_defaults(func=cmd_chat)
 
     e = sub.add_parser("eval", help="evaluate a single ad-hoc action")
     e.add_argument("action_type")

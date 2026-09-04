@@ -2,9 +2,8 @@
 
 Two ways to try it:
 
-- **[A. Run it locally on Windows](#a-run-it-locally-windows)** — for changing code and iterating.
-- **[B. Use the shared dev console](#b-use-the-shared-dev-console)** — if you only want to see it work. No install.
-- [macOS / Linux](#c-run-it-locally-macos--linux) is at the bottom.
+- **[A. Run it locally on Windows](#a-run-it-locally-windows)** — most of the team.
+- [macOS / Linux](#b-run-it-locally-macos--linux) is at the bottom.
 
 All PowerShell commands below assume you are in the repository root.
 
@@ -149,46 +148,27 @@ Evaluate a single ad-hoc action:
 Add `--json` to `run` or `eval` for structured output. In PowerShell the line
 continuation character is a backtick `` ` ``, not `\`.
 
-### 7. The web console (optional)
+### 7. Chat with it
 
 ```powershell
-$env:AGENTGATE_WEB_PASSWORD = "pick-something-long"
-.venv\Scripts\python.exe -m agentgate serve
+.venv\Scripts\python.exe -m agentgate chat
 ```
 
-Open <http://localhost:8080>. Scenario runner, free-text task box, live decision cards,
-approval queue and audit log.
+An interactive REPL, like Claude Code's own chat: type a message, a live LLM planner
+proposes the next tool call, and it still goes through the full detector + policy +
+risk pipeline before anything happens. `NEED_APPROVAL` pauses right there and asks
+`Approve? [y/N]`; `ASK_USER` prints the planner's question and takes your typed answer.
+`BLOCK` always stops the turn — there is no way to approve past it.
+
+By default the planner driving the chat is the same local Ollama model the detectors
+use (`AGENTGATE_LLM_PROVIDER=ollama`, no API key, no network latency). Set
+`AGENTGATE_LLM_PROVIDER` to `openrouter` / `openai` / `gemini` / `anthropic` plus
+`AGENTGATE_LLM_API_KEY` to use a remote model instead. Add `--no-execute` to dry-run
+the whole conversation without performing any real action.
 
 ---
 
-## B. Use the shared dev console
-
-No install. You need your SSH key on the dev box — send it to Nafis — and the console
-password.
-
-Windows 10 and 11 ship OpenSSH, so this works in PowerShell as-is. Open a terminal and
-leave it running:
-
-```powershell
-ssh -N -L 8080:127.0.0.1:8080 -p 11096 dev@proxy.bccdev.id
-```
-
-Then in a browser: <http://localhost:8080>
-
-Do not add `-f` on Windows; backgrounding is unreliable there. Keep the window open —
-closing it drops the tunnel.
-
-The tunnel is required, not a convenience: the provider forwards only SSH to that
-host, so nothing else reaches it. It is also what makes Gmail OAuth work, since Google
-only accepts plain-`http` redirects to `localhost`.
-
-Two things to expect: the box has **no GPU**, so one action takes roughly 400 seconds
-(six detector calls, run sequentially), and runs are serialized — if someone else is
-running, yours queues behind theirs.
-
----
-
-## C. Run it locally (macOS / Linux)
+## B. Run it locally (macOS / Linux)
 
 ```bash
 brew install postgresql@16 && brew services start postgresql@16   # macOS
@@ -237,9 +217,10 @@ The planner proposes; AgentGate decides. Five possible decisions:
 
 Worth knowing while reading output:
 
-- **Two different models are involved.** The local Ollama model is the *detector*. The
-  free-text planner is a separate remote model needing `AGENTGATE_LLM_API_KEY`;
-  without it the scenarios still work, since they replay recorded proposals.
+- **Two different models can be involved.** The local Ollama model is always the
+  *detector*, no matter what. `run`'s scenarios replay recorded proposals by default
+  (no planner LLM at all) and `run --planner llm` / `chat` add a free-text planner on
+  top — local via Ollama by default, or remote with `AGENTGATE_LLM_API_KEY`.
 - **Detection is entirely LLM-driven.** Pattern matching survives in exactly one place,
   `sanitizer.py`, because redaction has to replace exact character spans.
 - **Detector outages fail closed** to `NEED_APPROVAL`, never to `ALLOW`.
@@ -257,7 +238,7 @@ Worth knowing while reading output:
 | `Activate.ps1 cannot be loaded` | execution policy; see step 2 |
 | `ModuleNotFoundError: agentgate` | using global Python instead of `.venv\Scripts\python.exe` |
 | A run seems to hang | it probably has not; see the timing note above |
-| `AGENTGATE_WEB_PASSWORD must be set` | the console never runs unauthenticated |
+| `Planner unavailable` in `chat` | Ollama not running/model not pulled (local), or `AGENTGATE_LLM_API_KEY` unset (remote) |
 
 More detail: [README.md](../README.md) for the full reference, [TUTORIAL.md](../TUTORIAL.md)
 for executor walkthroughs, and [docs/ds/](ds/) for the design decisions behind the engine.

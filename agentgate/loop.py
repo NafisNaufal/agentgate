@@ -102,15 +102,23 @@ class AgentLoop:
         decider: DecisionEngine | None = None,
         tool_registry: ToolRegistry | None = None,
         on_step: Callable[[StepRecord], None] | None = None,
+        approval_callback: Callable[[str, StepRecord], str] | None = None,
     ):
         self.planner = planner
         self.router = router or DecisionRouter()
         self.max_steps = max_steps
         self.decider = decider or DecisionEngine()
         self.tool_registry = tool_registry or ToolRegistry()
-        # Fired as each step is decided. A run takes minutes on CPU-only inference,
-        # so anything watching it (the web console) needs progress, not just a result.
+        # Fired as each step is decided. A run can take minutes on CPU-only inference,
+        # so anything watching it needs progress, not just a result.
         self.on_step = on_step
+        # When set, a NEED_APPROVAL/ASK_USER step calls back into it - synchronously,
+        # in the same session - for a free-text answer instead of stopping the run.
+        # Called as approval_callback(kind, step) where kind is "approval" or
+        # "ask_user"; the returned text is read as an answer (ASK_USER) or checked
+        # for an affirmative "yes" (NEED_APPROVAL). Leave unset for batch/dry-run
+        # replay, which must keep stopping there - there's no one to ask.
+        self.approval_callback = approval_callback
 
     def run(self, task: str, observation: dict | None = None) -> RunResult:
         task_screen = self.decider.evaluate(
@@ -198,16 +206,25 @@ class AgentLoop:
                 control_decision = _control_decision(proposal)
                 self.decider.audit_store.record(control_request, control_decision)
                 outcome = self.router.route(control_request, control_decision)
-                self._record(
-                    result,
-                    StepRecord(
-                        i,
-                        proposal,
-                        request=control_request,
-                        decision=control_decision,
-                        outcome=outcome,
-                    ),
+                step = StepRecord(
+                    i,
+                    proposal,
+                    request=control_request,
+                    decision=control_decision,
+                    outcome=outcome,
                 )
+                self._record(result, step)
+                if self.approval_callback:
+                    kind = "ask_user" if proposal.action_type == "ASK_USER" else "approval"
+                    answer = self.approval_callback(kind, step)
+                    if kind == "ask_user":
+                        observation = {"user_answer": answer}
+                    else:
+                        observation = {
+                            "user_approved": _is_affirmative(answer),
+                            "user_answer": answer,
+                        }
+                    continue
                 result.status = outcome.status
                 result.final_message = outcome.message
                 break
@@ -265,15 +282,69 @@ class AgentLoop:
                     outcome.execution_result,
                 )
                 outcome.message = outcome.execution_result.summary
-            if getattr(self.router, "execution_enabled", False) and outcome.status in {
-                "blocked",
-                "awaiting_approval",
-                "ask_user",
-                "execution_failed",
-            }:
-                result.status = outcome.status
-                result.final_message = outcome.message
-                break
+            if outcome.status in {"blocked", "awaiting_approval", "ask_user", "execution_failed"}:
+                step = result.steps[-1]
+                # Interactive path: prompt regardless of execution_enabled, so
+                # `chat --no-execute` still has a real conversation instead of
+                # silently re-proposing the same blocked action until max_steps.
+                # A "yes" only actually executes when execution is enabled; in
+                # dry-run it's recorded like any other answer and the loop moves on.
+                if self.approval_callback and outcome.status in {"awaiting_approval", "ask_user"}:
+                    kind = "ask_user" if outcome.status == "ask_user" else "approval"
+                    answer = self.approval_callback(kind, step)
+                    approved = kind == "approval" and _is_affirmative(answer)
+                    if kind == "approval" and not getattr(self.router, "execution_enabled", False):
+                        # Dry-run: there is no "approved but not yet run" state to
+                        # make progress from, so re-proposing the same pending action
+                        # would just ask again next iteration - end the turn on the
+                        # human's answer instead of looping until max_steps.
+                        result.status = "approved_dry_run" if approved else "declined_dry_run"
+                        result.final_message = (
+                            "Approved - dry-run mode did not execute the action"
+                            if approved
+                            else "Declined"
+                        )
+                        break
+                    if approved and getattr(self.router, "execution_enabled", False):
+                        approved_outcome = self.router.execute_after_human_approval(
+                            req, decision, execution_arguments
+                        )
+                        self.decider.audit_store.update(
+                            decision.audit_id,
+                            execution_status=approved_outcome.status,
+                            execution_result=(
+                                approved_outcome.execution_result.to_dict()
+                                if approved_outcome.execution_result
+                                else None
+                            ),
+                        )
+                        step.outcome = approved_outcome
+                        observation = {
+                            "last_outcome": approved_outcome.status,
+                            "last_decision": decision.decision.value,
+                        }
+                        if approved_outcome.execution_result:
+                            observation["last_result"] = self._screen_execution_observation(
+                                req, approved_outcome.execution_result
+                            )
+                            approved_outcome.message = approved_outcome.execution_result.summary
+                        if approved_outcome.status == "execution_failed":
+                            result.status = approved_outcome.status
+                            result.final_message = approved_outcome.message
+                            break
+                        continue
+                    observation["user_answer"] = answer
+                    observation["user_approved"] = approved
+                    continue
+                # Batch/dry-run replay (no callback): NEED_APPROVAL/ASK_USER on a real
+                # action only stops the run once execution is enabled - a plain
+                # dry-run `run` keeps walking the whole scenario to preview every
+                # step's decision. A live callback always stops here for BLOCK /
+                # execution_failed, since neither is ever something to ask about.
+                if self.approval_callback or getattr(self.router, "execution_enabled", False):
+                    result.status = outcome.status
+                    result.final_message = outcome.message
+                    break
         else:
             result.status = "max_steps_reached"
         return result
@@ -335,6 +406,10 @@ class AgentLoop:
             "data": None,
             "error": None,
         }
+
+
+def _is_affirmative(text: str) -> bool:
+    return text.strip().lower() in {"y", "yes", "yeah", "yep", "approve", "approved", "ok", "okay"}
 
 
 def _control_decision(proposal: Proposal) -> DecisionResponse:

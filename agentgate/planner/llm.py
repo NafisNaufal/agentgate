@@ -1,14 +1,17 @@
 """LLMPlanner: optional real-LLM planner.
 
-Pluggable client for Gemini / OpenRouter / OpenAI / Anthropic. Uses only the stdlib
-(urllib) so there is no extra dependency. Reads provider + key from env:
+Pluggable client for Ollama (local) / Gemini / OpenRouter / OpenAI / Anthropic. Uses
+only the stdlib (urllib) so there is no extra dependency. Reads provider + key from
+env:
 
-    AGENTGATE_LLM_PROVIDER = openrouter | openai | gemini | anthropic
-    AGENTGATE_LLM_API_KEY  = <key>
+    AGENTGATE_LLM_PROVIDER = ollama | openrouter | openai | gemini | anthropic
+    AGENTGATE_LLM_API_KEY  = <key>  (not needed for ollama)
     AGENTGATE_LLM_MODEL    = <model id>  (optional)
 
-The LLM is asked to return a single JSON proposal in the AgentGate action space. If no
-key is configured, instantiation raises - the demo defaults to ReplayPlanner instead.
+The LLM is asked to return a single JSON proposal in the AgentGate action space.
+`ollama` talks to the same local server the detectors use (OLLAMA_HOST), so it needs
+no key and no network hop - the default for the interactive chat CLI. The remote
+providers need an API key; without one, instantiation raises.
 """
 
 from __future__ import annotations
@@ -21,12 +24,15 @@ from typing import Any
 from .base import Planner, Proposal
 
 _ENDPOINTS = {
+    "ollama": os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+    + "/v1/chat/completions",
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     "openai": "https://api.openai.com/v1/chat/completions",
     "anthropic": "https://api.anthropic.com/v1/messages",
     "gemini": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
 }
 _DEFAULT_MODELS = {
+    "ollama": os.environ.get("AGENTGATE_LLM_DETECTOR_MODEL", "qwen2.5:7b"),
     "openrouter": "openai/gpt-4o-mini",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
@@ -59,9 +65,12 @@ class LLMPlanner(Planner):
         if self.provider not in _ENDPOINTS:
             raise ValueError(f"Unsupported provider '{self.provider}'")
         if not self.api_key:
-            raise RuntimeError(
-                "No AGENTGATE_LLM_API_KEY set. Use the default ReplayPlanner, or export a key."
-            )
+            if self.provider != "ollama":
+                raise RuntimeError(
+                    "No AGENTGATE_LLM_API_KEY set. Use AGENTGATE_LLM_PROVIDER=ollama "
+                    "(local, no key needed), the default ReplayPlanner, or export a key."
+                )
+            self.api_key = "ollama"  # placeholder; the local server ignores auth
 
     def propose(self, task: str, observation: dict | None = None) -> Proposal:
         user = f"TASK: {task}\nOBSERVATION: {json.dumps(observation or {})}"

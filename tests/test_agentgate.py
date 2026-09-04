@@ -24,12 +24,14 @@ from agentgate.detectors import (
     LLMSourceCodeDetector,
     get_default_detectors,
 )
+from agentgate.executors import ExecutionResult, ExecutorRegistry
 from agentgate.loop import AgentLoop
 from agentgate.planner import ReplayPlanner
+from agentgate.planner.base import execution_argument_fingerprint
 from agentgate.policy import PolicyEngine
 from agentgate.router import DecisionRouter
 from agentgate.sanitizer import sanitize
-from agentgate.schemas import ActionRequest, Decision, RiskLevel
+from agentgate.schemas import ActionRequest, Decision, DecisionResponse, RiskLevel
 from agentgate.tools import ToolRegistry, ToolSpec
 from tests.fake_llm import fake_chat_json
 from tests.fake_audit import audit_patch
@@ -412,6 +414,127 @@ class TestLoop(unittest.TestCase):
         result = loop.run("do something")
         self.assertEqual(result.status, "failed")
         self.assertIn("Planner unavailable", result.final_message)
+
+
+class _StubExecutor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    def execute(self, action_type, arguments):
+        self.calls.append((action_type, dict(arguments)))
+        return ExecutionResult(True, "executed", "stub executed")
+
+
+class TestInteractiveApproval(unittest.TestCase):
+    """AgentLoop's approval_callback: the interactive chat's equivalent of a human
+    reviewer, wired in synchronously instead of stopping the run. BLOCK is never
+    routed through it - only NEED_APPROVAL/ASK_USER steps ever call back."""
+
+    def setUp(self):
+        self.llm = patch("agentgate.detectors.llm_client.chat_json", side_effect=fake_chat_json)
+        self.llm.start()
+
+    def tearDown(self):
+        self.llm.stop()
+
+    def _payment_step(self):
+        scenario = json.loads((SCENARIO_DIR / "booking_message.json").read_text())
+        return scenario["task"], scenario["steps"][-1]  # submit_payment_message -> NEED_APPROVAL
+
+    def test_approving_a_real_action_executes_it_and_continues(self):
+        task, step = self._payment_step()
+        stub = _StubExecutor()
+        executors = ExecutorRegistry()
+        executors.register_action("BROWSER_SUBMIT", stub)
+        router = DecisionRouter(executors, execute=True)
+        loop = AgentLoop(
+            ReplayPlanner([step]),
+            router,
+            approval_callback=lambda kind, s: "yes",
+        )
+        result = loop.run(task)
+        self.assertEqual(len(stub.calls), 1)
+        self.assertEqual(result.steps[0].outcome.status, "executed")
+        self.assertEqual(result.status, "completed")  # planner exhausted -> DONE
+
+    def test_denying_a_real_action_never_executes_it(self):
+        task, step = self._payment_step()
+        stub = _StubExecutor()
+        executors = ExecutorRegistry()
+        executors.register_action("BROWSER_SUBMIT", stub)
+        router = DecisionRouter(executors, execute=True)
+        loop = AgentLoop(
+            ReplayPlanner([step]),
+            router,
+            approval_callback=lambda kind, s: "no",
+        )
+        result = loop.run(task)
+        self.assertEqual(stub.calls, [])
+        self.assertEqual(result.steps[0].outcome.status, "awaiting_approval")
+
+    def test_ask_user_control_step_feeds_the_answer_back_and_continues(self):
+        loop = AgentLoop(
+            ReplayPlanner([{"action_type": "ASK_USER", "arguments": {"question": "which color?"}}]),
+            approval_callback=lambda kind, s: "blue",
+        )
+        result = loop.run("pick a color")
+        # ReplayPlanner is exhausted after the one queued step, so the loop's next
+        # propose() call returns DONE - proof the run actually continued past the
+        # answer instead of stopping there.
+        decided = [s.decision.decision for s in result.steps if s.decision]
+        self.assertIn(Decision.ASK_USER, decided)
+        self.assertEqual(result.status, "dry_run_intervention")
+
+    def test_no_approval_callback_keeps_batch_behavior(self):
+        """Without approval_callback (the default, used by `run`), NEED_APPROVAL must
+        still stop the run rather than silently waiting for input that never comes."""
+        task, step = self._payment_step()
+        stub = _StubExecutor()
+        executors = ExecutorRegistry()
+        executors.register_action("BROWSER_SUBMIT", stub)
+        router = DecisionRouter(executors, execute=True)
+        result = AgentLoop(ReplayPlanner([step]), router).run(task)
+        self.assertEqual(stub.calls, [])
+        self.assertEqual(result.status, "awaiting_approval")
+
+
+class TestRouterHumanApproval(unittest.TestCase):
+    def test_execute_after_human_approval_runs_the_action(self):
+        stub = _StubExecutor()
+        executors = ExecutorRegistry()
+        executors.register_action("FILE_DELETE", stub)
+        router = DecisionRouter(executors, execute=True)
+        arguments = {"path": "/tmp/x"}
+        req = AR(action_type="FILE_DELETE", target="/tmp/x")
+        req._execution_argument_fingerprint = execution_argument_fingerprint(arguments)
+        decision = DecisionResponse(
+            decision=Decision.NEED_APPROVAL, risk_level=RiskLevel.HIGH, risk_score=0.6, reasons=["x"]
+        )
+        outcome = router.execute_after_human_approval(req, decision, arguments)
+        self.assertEqual(outcome.status, "executed")
+        self.assertEqual(stub.calls, [("FILE_DELETE", arguments)])
+
+    def test_execute_after_human_approval_refuses_allow_decisions(self):
+        router = DecisionRouter(execute=True)
+        decision = DecisionResponse(
+            decision=Decision.ALLOW, risk_level=RiskLevel.LOW, risk_score=0.0, reasons=[]
+        )
+        with self.assertRaises(ValueError):
+            router.execute_after_human_approval(AR(action_type="FILE_DELETE"), decision, {})
+
+    def test_route_never_auto_executes_need_approval_even_with_execution_enabled(self):
+        """route() must keep sending NEED_APPROVAL to the pending status unconditionally
+        - only a synchronous human 'yes' via execute_after_human_approval may execute it."""
+        stub = _StubExecutor()
+        executors = ExecutorRegistry()
+        executors.register_action("FILE_DELETE", stub)
+        router = DecisionRouter(executors, execute=True)
+        decision = DecisionResponse(
+            decision=Decision.NEED_APPROVAL, risk_level=RiskLevel.HIGH, risk_score=0.6, reasons=["x"]
+        )
+        outcome = router.route(AR(action_type="FILE_DELETE"), decision, {"path": "/tmp/x"})
+        self.assertEqual(outcome.status, "awaiting_approval")
+        self.assertEqual(stub.calls, [])
 
 
 if __name__ == "__main__":

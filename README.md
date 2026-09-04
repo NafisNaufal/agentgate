@@ -124,34 +124,28 @@ The CLI returns an actionable reason instead of a traceback.
 The LLM detector uses only the stdlib Ollama HTTP API. It performs no retries. The
 timeout applies per detector request.
 
-## Web Demo Console
+## Chat
 
 ```bash
-export AGENTGATE_WEB_PASSWORD=a-long-shared-password
-python3 -m agentgate serve                 # loopback only
-python3 -m agentgate serve --host 0.0.0.0  # reachable on the network
+agentgate chat               # real ALLOW/SANITIZE actions execute; NEED_APPROVAL/
+                              # ASK_USER pause inline for a yes/no or a short answer
+agentgate chat --no-execute  # dry-run: nothing is ever actually performed
 ```
 
-Scenario runner and free-text task input, live decision cards, an approval queue, the
-audit log, and Gmail connect. Stdlib only, one embedded page, no build step.
+An interactive REPL, guarded turn by turn - each message you send is one task run
+through the same custom loop (`agentgate run`) uses, so every proposed tool call still
+goes through the full detector + policy + risk pipeline before anything happens.
 
-Every run is dry-run: the console evaluates and routes but never executes an action,
-and approving in the queue records the reviewer decision without executing anything.
+The planner behind the chat is a real LLM, chosen with `AGENTGATE_LLM_PROVIDER`:
+`ollama` (default - runs against the same local Ollama instance the detectors use, no
+API key, no network latency) or `openrouter` / `openai` / `gemini` / `anthropic` (need
+`AGENTGATE_LLM_API_KEY`). The guardrail's own detectors are unaffected either way -
+they always run locally regardless of which planner is driving the conversation.
 
-The password is required; there is no unauthenticated mode. Sessions are in memory,
-state-changing calls need a CSRF header, and a run takes minutes on CPU-only inference
-so runs happen on a worker thread while the page polls.
-
-**Connecting Gmail:** Google only accepts plain-`http` OAuth redirects to `localhost`.
-Reach the console through a tunnel and connect from there:
-
-```bash
-ssh -L 8080:127.0.0.1:8080 -p <port> user@server
-```
-
-Then open `http://localhost:8080`. Register `http://localhost:8080/oauth/callback` as
-the redirect URI on the Google OAuth client. At any other origin the console disables
-the connect button and says why rather than failing at the redirect.
+When a step comes back `NEED_APPROVAL`, the CLI prints the reasons and asks
+`Approve? [y/N]` right there; the loop only executes that step after a `y`, and a
+`BLOCK` can never be approved around - it always stops the turn. `ASK_USER` prints the
+planner's question and feeds your typed answer back in so it can continue.
 
 ## Audit Log
 

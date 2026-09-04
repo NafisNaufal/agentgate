@@ -194,14 +194,6 @@ class TestScenarioExecution(unittest.TestCase):
         self.assertIn("Result: PASS", output)
         self.assertIn("Exit code: 0", output)
 
-    def test_web_console_uses_structured_expectation_summary(self):
-        from agentgate.web.app import Console
-
-        scenarios = Console.__new__(Console).scenarios()
-        expected = {scenario["name"]: scenario["expected"] for scenario in scenarios}
-        self.assertEqual(expected["ambiguous_cleanup"], "ALLOW -> ASK_USER")
-        self.assertTrue(all(expected.values()))
-
 
 class TestScenarioFailureExitCode(unittest.TestCase):
     def test_intentional_mismatch_returns_nonzero(self):
